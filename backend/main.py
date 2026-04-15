@@ -1,404 +1,737 @@
 """
-main.py
+Supply Chain Sentinel -- FastAPI Server
+========================================
+12 endpoints across three domains:
 
-FastAPI application entry point for the Supply Chain Sentinel system.
-Provides REST endpoints for shipment tracking, route graph inspection,
-risk breakdown analysis, and disruption event injection.
+Core (Days 1-2)
+  GET  /                      -- Project info
+  GET  /health                -- Health check with DB + graph status
+  GET  /shipments             -- Paginated shipment list with optional filters
+  GET  /shipments/{id}        -- Single shipment with detailed risk breakdown
+  GET  /graph                 -- Full route graph (nodes + edges) for frontend
+
+Disruption Simulator (Day 2)
+  POST /disruptions/inject    -- Manually inject a disruption at a node
+  GET  /disruptions/active    -- List all currently active disruptions
+  GET  /disruptions/history   -- Last 50 disruption events from Supabase
+  POST /disruptions/auto      -- Trigger a random auto-disruption (demo button)
+
+AI Rerouting Agent (Day 3)  <- NEW
+  POST /agent/reroute         -- Run the autonomous rerouting agent on a shipment
+  GET  /agent/decisions       -- List all committed reroute decisions (paginated)
+  GET  /agent/decisions/{id}  -- Single reroute decision detail
 """
 
-import datetime
-import uuid
-from typing import Optional
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
 
-import psycopg2.extras
+import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from agent import ReroutingAgent
 from database import get_connection, init_db
 from disruption_simulator import DisruptionSimulator
+from risk_engine import get_graph
 
 # ---------------------------------------------------------------------------
-# Load environment variables from .env
+# Environment & Logging
 # ---------------------------------------------------------------------------
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
-# Module-level DisruptionSimulator instance shared across endpoints
+# Module-level Singletons
 # ---------------------------------------------------------------------------
+# DisruptionSimulator is shared across all requests so that active_disruptions
+# state is preserved in memory between injections.
 simulator = DisruptionSimulator()
 
-# ---------------------------------------------------------------------------
-# FastAPI application instance
-# ---------------------------------------------------------------------------
-app = FastAPI(
-    title="Supply Chain Sentinel API",
-    description="Preemptive supply chain disruption detection system",
-    version="0.1.0",
-)
+# ReroutingAgent is stateless per-run; one instance is reused for efficiency.
+agent = ReroutingAgent()
+
 
 # ---------------------------------------------------------------------------
-# CORS middleware — allow all origins for prototype purposes
+# Lifespan -- startup / shutdown
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan handler.
+    On startup: initialise the database schema and pre-load the NetworkX graph
+    into memory so the first request is not slow.
+    """
+    logger.info("Starting up Supply Chain Sentinel ...")
+    init_db()
+    get_graph()     # Pre-warm the graph singleton
+    logger.info("Startup complete -- all systems nominal.")
+    yield
+    logger.info("Shutting down Supply Chain Sentinel.")
+
+
+# ---------------------------------------------------------------------------
+# FastAPI App
+# ---------------------------------------------------------------------------
+app = FastAPI(
+    title="Supply Chain Sentinel",
+    description=(
+        "Preemptive supply chain disruption detection and autonomous rerouting. "
+        "Built for a 12-day hackathon sprint."
+    ),
+    version="0.3.0",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_origins=["*"],    # Tighten this in production
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# Startup event — ensure database tables exist
-# ---------------------------------------------------------------------------
-@app.on_event("startup")
-def on_startup():
-    """Create all tables if they do not already exist."""
-    init_db()
 
 # ---------------------------------------------------------------------------
-# Request / response schemas
+# Request / Response Models
 # ---------------------------------------------------------------------------
 
 class DisruptionInjectRequest(BaseModel):
-    """Body schema for the disruption injection endpoint."""
-    node_id: str
-    severity: float = Field(..., ge=0.0, le=1.0)
-    disruption_type: str
+    """Payload for POST /disruptions/inject."""
+    node_id:         str   = Field(..., description="Graph node ID to inject the disruption at.")
+    severity:        float = Field(..., ge=0.0, le=1.0, description="Severity score 0.0-1.0.")
+    disruption_type: str   = Field(..., description="Human-readable disruption label.")
 
 
-# ---------------------------------------------------------------------------
-# Helper: convert a psycopg2 RealDictRow to a plain dict
-# ---------------------------------------------------------------------------
-def row_to_dict(row) -> dict:
-    """Convert a psycopg2 RealDictRow object into a regular dictionary."""
-    return dict(row)
+class RerouteRequest(BaseModel):
+    """Payload for POST /agent/reroute."""
+    shipment_id: str = Field(..., description="Shipment ID to evaluate, e.g. 'SHP_0001'.")
 
 
 # ---------------------------------------------------------------------------
 # ENDPOINT 1: GET /
-# Simple health-check that confirms the API is online.
 # ---------------------------------------------------------------------------
-@app.get("/")
+@app.get("/", tags=["Core"])
 def root():
+    """
+    Project info and quick-link index.
+    Returns the project name, version, and a list of all available endpoints.
+    """
     return {
-        "status": "online",
-        "system": "Supply Chain Sentinel",
-        "version": "0.1.0",
+        "project": "Supply Chain Sentinel",
+        "version": "0.3.0",
+        "status":  "operational",
+        "endpoints": {
+            "health":             "GET  /health",
+            "shipments":          "GET  /shipments",
+            "shipment_detail":    "GET  /shipments/{shipment_id}",
+            "graph":              "GET  /graph",
+            "inject_disruption":  "POST /disruptions/inject",
+            "active_disruptions": "GET  /disruptions/active",
+            "disruption_history": "GET  /disruptions/history",
+            "auto_disruption":    "POST /disruptions/auto",
+            "agent_reroute":      "POST /agent/reroute",
+            "agent_decisions":    "GET  /agent/decisions",
+            "agent_decision":     "GET  /agent/decisions/{decision_id}",
+            "docs":               "GET  /docs",
+        },
     }
 
 
 # ---------------------------------------------------------------------------
 # ENDPOINT 2: GET /health
-# Deeper health-check that verifies database connectivity and returns
-# the current shipment count along with an ISO timestamp.
 # ---------------------------------------------------------------------------
-@app.get("/health")
+@app.get("/health", tags=["Core"])
 def health_check():
+    """
+    Deep health check -- verifies Supabase connectivity and graph state.
+
+    Returns 200 with full status dict if all subsystems are healthy.
+    Returns 503 if Supabase is unreachable.
+    """
+    # Database ping
+    db_status      = "healthy"
+    shipment_count = 0
     try:
         conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT COUNT(*) AS cnt FROM shipments")
-        total = cur.fetchone()["cnt"]
-        cur.close()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM shipments")
+            shipment_count = cur.fetchone()[0]
         conn.close()
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "total_shipments": total,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Health check failed: {str(exc)}")
+        logger.error("Health check DB error: %s", exc)
+        db_status = f"unhealthy - {exc}"
+
+    # Graph ping
+    graph        = get_graph()
+    graph_status = "healthy"
+    node_count   = 0
+    edge_count   = 0
+    if graph is None:
+        graph_status = "unhealthy - graph not loaded"
+    else:
+        node_count = graph.number_of_nodes()
+        edge_count = graph.number_of_edges()
+
+    if "unhealthy" in db_status:
+        raise HTTPException(status_code=503, detail={"database": db_status})
+
+    return {
+        "status":              "healthy",
+        "database":            db_status,
+        "shipment_count":      shipment_count,
+        "graph":               graph_status,
+        "graph_nodes":         node_count,
+        "graph_edges":         edge_count,
+        "active_disruptions":  len(simulator.get_active_disruptions()),
+    }
 
 
 # ---------------------------------------------------------------------------
 # ENDPOINT 3: GET /shipments
-# Returns a filtered, paginated list of shipments ordered by risk_score
-# descending so the highest-risk shipments surface first.
-#
-# Optional query parameters:
-#   status        — filter by shipment status
-#   priority_tier — filter by priority tier (1, 2, or 3)
-#   min_risk      — only return shipments with risk_score >= this value
-#   limit         — max results to return (default 100, max 500)
 # ---------------------------------------------------------------------------
-@app.get("/shipments")
+@app.get("/shipments", tags=["Shipments"])
 def list_shipments(
-    status: Optional[str] = Query(None, pattern="^(in_transit|delayed|delivered)$"),
-    priority_tier: Optional[int] = Query(None, ge=1, le=3),
-    min_risk: Optional[float] = Query(None, ge=0.0, le=1.0),
-    limit: int = Query(100, ge=1, le=500),
+    limit:    int   = Query(default=50,  ge=1, le=500, description="Max rows to return."),
+    offset:   int   = Query(default=0,   ge=0,          description="Pagination offset."),
+    status:   str   = Query(default=None,               description="Filter by status."),
+    min_risk: float = Query(default=None, ge=0.0, le=1.0, description="Minimum risk_score filter."),
 ):
+    """
+    List active shipments with optional filters and pagination.
+    Ordered by risk_score DESC.
+    """
+    conn = get_connection()
     try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        with conn.cursor() as cur:
+            conditions = []
+            params     = []
 
-        query = "SELECT * FROM shipments WHERE 1=1"
-        params: list = []
+            if status is not None:
+                conditions.append("status = %s")
+                params.append(status)
+            if min_risk is not None:
+                conditions.append("risk_score >= %s")
+                params.append(min_risk)
 
-        if status is not None:
-            query += " AND status = %s"
-            params.append(status)
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        if priority_tier is not None:
-            query += " AND priority_tier = %s"
-            params.append(priority_tier)
+            cur.execute(f"""
+                SELECT
+                    shipment_id, origin, destination, current_node,
+                    cargo_type, priority_tier, sla_deadline,
+                    estimated_arrival, carrier_id, status, risk_score
+                FROM shipments
+                {where_clause}
+                ORDER BY risk_score DESC
+                LIMIT %s OFFSET %s
+            """, (*params, limit, offset))
 
-        if min_risk is not None:
-            query += " AND risk_score >= %s"
-            params.append(min_risk)
+            rows    = cur.fetchall()
+            columns = [
+                "shipment_id", "origin", "destination", "current_node",
+                "cargo_type", "priority_tier", "sla_deadline",
+                "estimated_arrival", "carrier_id", "status", "risk_score",
+            ]
+            shipments = [dict(zip(columns, row)) for row in rows]
 
-        query += " ORDER BY risk_score DESC LIMIT %s"
-        params.append(limit)
+            cur.execute(f"SELECT COUNT(*) FROM shipments {where_clause}", params)
+            total = cur.fetchone()[0]
 
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        return {"total": total, "limit": limit, "offset": offset, "shipments": shipments}
 
-        return [row_to_dict(r) for r in rows]
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch shipments: {str(exc)}")
+        logger.error("list_shipments error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
 # ENDPOINT 4: GET /shipments/{shipment_id}
-# Returns full details for a single shipment together with a computed
-# risk_breakdown object that explains the contributing risk factors.
-#
-# Risk breakdown logic:
-#   - congestion / weather / geopolitical contributions derive from the
-#     edge_risk_score of the route matching the shipment's origin→destination.
-#   - carrier_reliability_contribution = (1 − carrier reliability) × 0.3
-#   - time_pressure_contribution maps days-until-SLA to 0.0–1.0
-#     (0 days → 1.0, ≥30 days → 0.0)
-#   - A human-readable summary_text is generated describing the risk level.
 # ---------------------------------------------------------------------------
-@app.get("/shipments/{shipment_id}")
+@app.get("/shipments/{shipment_id}", tags=["Shipments"])
 def get_shipment(shipment_id: str):
+    """
+    Retrieve a single shipment with a full risk breakdown including adjacent
+    edge risks, active disruptions, and carrier reliability score.
+    Returns 404 if the shipment is not found.
+    """
+    conn = get_connection()
     try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        with conn.cursor() as cur:
 
-        # Fetch the shipment
-        cur.execute("SELECT * FROM shipments WHERE shipment_id = %s", (shipment_id,))
-        shipment_row = cur.fetchone()
+            # Core shipment
+            cur.execute("""
+                SELECT
+                    shipment_id, origin, destination, current_node,
+                    cargo_type, priority_tier, sla_deadline,
+                    estimated_arrival, carrier_id, status, risk_score
+                FROM shipments
+                WHERE shipment_id = %s
+            """, (shipment_id,))
 
-        if shipment_row is None:
-            cur.close()
-            conn.close()
-            raise HTTPException(status_code=404, detail=f"Shipment {shipment_id} not found")
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Shipment '{shipment_id}' not found.")
 
-        shipment = row_to_dict(shipment_row)
+            shipment = {
+                "shipment_id":       row[0],
+                "origin":            row[1],
+                "destination":       row[2],
+                "current_node":      row[3],
+                "cargo_type":        row[4],
+                "priority_tier":     row[5],
+                "sla_deadline":      row[6],
+                "estimated_arrival": row[7],
+                "carrier_id":        row[8],
+                "status":            row[9],
+                "risk_score":        float(row[10]) if row[10] is not None else 0.0,
+            }
 
-        # Fetch the matching route edge for risk breakdown
-        cur.execute(
-            "SELECT * FROM route_graph WHERE from_node = %s AND to_node = %s",
-            (shipment["origin"], shipment["destination"]),
-        )
-        edge_row = cur.fetchone()
-        edge_risk = row_to_dict(edge_row)["edge_risk_score"] if edge_row else 0.5
+            # Carrier reliability
+            carrier_info = None
+            if shipment["carrier_id"]:
+                cur.execute("""
+                    SELECT carrier_name, reliability_score
+                    FROM carriers
+                    WHERE carrier_id = %s
+                """, (shipment["carrier_id"],))
+                c_row = cur.fetchone()
+                if c_row:
+                    carrier_info = {
+                        "carrier_name":      c_row[0],
+                        "reliability_score": float(c_row[1]) if c_row[1] is not None else 0.0,
+                    }
 
-        # Fetch carrier reliability
-        cur.execute(
-            "SELECT reliability_score FROM carriers WHERE carrier_id = %s",
-            (shipment["carrier_id"],),
-        )
-        carrier_row = cur.fetchone()
-        carrier_reliability = carrier_row["reliability_score"] if carrier_row else 0.7
+            # Adjacent edge risk breakdown
+            cur.execute("""
+                SELECT from_node, to_node, mode, distance_km,
+                       congestion_index, weather_risk, geopolitical_score, edge_risk_score
+                FROM route_graph
+                WHERE from_node = %s OR to_node = %s
+                ORDER BY edge_risk_score DESC
+            """, (shipment["current_node"], shipment["current_node"]))
 
-        cur.close()
-        conn.close()
+            edge_risks = []
+            for e in cur.fetchall():
+                edge_risks.append({
+                    "from_node":          e[0],
+                    "to_node":            e[1],
+                    "mode":               e[2],
+                    "distance_km":        float(e[3]) if e[3] is not None else 0.0,
+                    "congestion_index":   float(e[4]) if e[4] is not None else 0.0,
+                    "weather_risk":       float(e[5]) if e[5] is not None else 0.0,
+                    "geopolitical_score": float(e[6]) if e[6] is not None else 0.0,
+                    "edge_risk_score":    float(e[7]) if e[7] is not None else 0.0,
+                })
 
-        # Compute individual risk contributions
-        congestion_contribution = round(edge_risk * 0.4, 4)
-        weather_contribution = round(edge_risk * 0.35, 4)
-        geopolitical_contribution = round(edge_risk * 0.25, 4)
-        carrier_reliability_contribution = round((1 - carrier_reliability) * 0.3, 4)
-
-        # Time pressure: days until SLA mapped linearly to 0.0–1.0
-        sla_deadline = shipment.get("sla_deadline")
-        if sla_deadline:
-            try:
-                # Handle both timezone-aware and naive ISO strings
-                sla_dt = datetime.datetime.fromisoformat(sla_deadline.replace("Z", "+00:00"))
-                now_utc = datetime.datetime.now(datetime.timezone.utc)
-                days_remaining = max((sla_dt - now_utc).total_seconds() / 86400, 0)
-            except (ValueError, TypeError):
-                days_remaining = 15  # Fallback if parsing fails
-        else:
-            days_remaining = 15  # Default mid-range if no SLA set
-
-        # 0 days remaining → 1.0, 30+ days → 0.0
-        time_pressure_contribution = round(max(1.0 - (days_remaining / 30.0), 0.0), 4)
-
-        # Determine risk level label
-        total_risk = shipment["risk_score"]
-        if total_risk >= 0.7:
-            risk_label = "HIGH"
-        elif total_risk >= 0.4:
-            risk_label = "MODERATE"
-        else:
-            risk_label = "LOW"
-
-        days_int = int(days_remaining)
-        summary_text = (
-            f"Shipment {shipment_id} is at {risk_label} risk. "
-            f"Primary driver: port congestion at current node. "
-            f"SLA deadline in {days_int} days."
-        )
-
-        risk_breakdown = {
-            "shipment_id": shipment_id,
-            "congestion_contribution": congestion_contribution,
-            "weather_contribution": weather_contribution,
-            "geopolitical_contribution": geopolitical_contribution,
-            "carrier_reliability_contribution": carrier_reliability_contribution,
-            "time_pressure_contribution": time_pressure_contribution,
-            "total_risk_score": total_risk,
-            "summary_text": summary_text,
-        }
+            # Active disruptions (most severe recent events)
+            cur.execute("""
+                SELECT event_id, affected_node, disruption_type,
+                       severity, timestamp, affected_shipment_count
+                FROM disruption_events
+                ORDER BY severity DESC, timestamp DESC
+                LIMIT 10
+            """)
+            active_disruptions = []
+            for d in cur.fetchall():
+                active_disruptions.append({
+                    "event_id":                d[0],
+                    "affected_node":           d[1],
+                    "disruption_type":         d[2],
+                    "severity":                float(d[3]) if d[3] is not None else 0.0,
+                    "timestamp":               d[4],
+                    "affected_shipment_count": d[5],
+                })
 
         return {
             "shipment": shipment,
-            "risk_breakdown": risk_breakdown,
+            "carrier":  carrier_info,
+            "risk_breakdown": {
+                "adjacent_edges":     edge_risks,
+                "active_disruptions": active_disruptions,
+            },
         }
+
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch shipment: {str(exc)}")
+        logger.error("get_shipment error [%s]: %s", shipment_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
 # ENDPOINT 5: GET /graph
-# Returns the full route graph as JSON with two keys:
-#   - "nodes": deduplicated list of all node names from the route_graph table
-#   - "edges": list of every edge with all stored fields
-# This payload is consumed by the frontend map visualisation.
 # ---------------------------------------------------------------------------
-@app.get("/graph")
-def get_graph():
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+@app.get("/graph", tags=["Graph"])
+def get_graph_data():
+    """
+    Return the full route graph as a node/edge JSON payload for the frontend map.
+    Served from the in-memory NetworkX singleton -- no DB query.
+    """
+    graph = get_graph()
+    if graph is None:
+        raise HTTPException(status_code=503, detail="Route graph is not loaded.")
 
-        cur.execute("SELECT * FROM route_graph")
-        edge_rows = cur.fetchall()
-        cur.close()
-        conn.close()
+    nodes = [{"id": node, **data} for node, data in graph.nodes(data=True)]
 
-        edges = [row_to_dict(r) for r in edge_rows]
+    edges = []
+    for u, v, data in graph.edges(data=True):
+        edge_payload = {"from": u, "to": v}
+        edge_payload.update(
+            {k: (float(val) if isinstance(val, float) else val) for k, val in data.items()}
+        )
+        edges.append(edge_payload)
 
-        # Collect unique node names from both sides of each edge
-        node_set: set[str] = set()
-        for edge in edges:
-            node_set.add(edge["from_node"])
-            node_set.add(edge["to_node"])
-
-        return {
-            "nodes": sorted(node_set),
-            "edges": edges,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch graph: {str(exc)}")
+    return {
+        "node_count": graph.number_of_nodes(),
+        "edge_count": graph.number_of_edges(),
+        "nodes":      nodes,
+        "edges":      edges,
+    }
 
 
 # ---------------------------------------------------------------------------
-# ENDPOINT 7: POST /disruptions/inject
-# Injects a disruption at a graph node using the DisruptionSimulator.
-# The simulator validates inputs, computes cascade impact, logs to DB,
-# and tracks the disruption in memory.
-#
-# Returns 400 if node_id is not found in the graph.
-# Returns 422 if severity is not between 0.0 and 1.0.
+# ENDPOINT 6: POST /disruptions/inject
 # ---------------------------------------------------------------------------
-@app.post("/disruptions/inject")
+@app.post("/disruptions/inject", tags=["Disruptions"])
 def inject_disruption(body: DisruptionInjectRequest):
-    """Inject a disruption event via the DisruptionSimulator."""
-    try:
-        result = simulator.inject(
-            node_id=body.node_id,
-            severity=body.severity,
-            disruption_type=body.disruption_type,
+    """
+    Manually inject a disruption event at a specific graph node.
+    Triggers cascade impact calculation and updates downstream shipment risks.
+    Returns 400 if node_id is not in the route graph.
+    """
+    graph = get_graph()
+    if body.node_id not in graph:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Node '{body.node_id}' not found in route graph. "
+                f"Sample nodes: {sorted(list(graph.nodes()))[:10]}"
+            ),
         )
-        return result
-    except ValueError as ve:
-        error_msg = str(ve)
-        # Distinguish between invalid severity and missing node
-        if "Severity" in error_msg:
-            raise HTTPException(status_code=422, detail=error_msg)
-        raise HTTPException(status_code=400, detail=error_msg)
+
+    try:
+        return simulator.inject(body.node_id, body.severity, body.disruption_type)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to inject disruption: {str(exc)}")
+        logger.error("inject_disruption error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
-# ENDPOINT 8: GET /disruptions/active
-# Returns the list of currently active (un-cleared) disruptions.
-# Returns an empty list if no disruptions are active.
+# ENDPOINT 7: GET /disruptions/active
 # ---------------------------------------------------------------------------
-@app.get("/disruptions/active")
+@app.get("/disruptions/active", tags=["Disruptions"])
 def get_active_disruptions():
-    """Return all active disruptions tracked by the simulator."""
-    return simulator.get_active_disruptions()
+    """
+    Return all disruptions currently held in the simulator's in-memory state.
+    Returns an empty list if no disruptions are active.
+    """
+    return {
+        "count":       len(simulator.get_active_disruptions()),
+        "disruptions": simulator.get_active_disruptions(),
+    }
 
 
 # ---------------------------------------------------------------------------
-# ENDPOINT 9: GET /disruptions/history
-# Queries the disruption_events table from Supabase and returns the
-# last 50 events ordered by timestamp descending.
+# ENDPOINT 8: GET /disruptions/history
 # ---------------------------------------------------------------------------
-@app.get("/disruptions/history")
-def get_disruption_history():
-    """Fetch the 50 most recent disruption events from the database."""
+@app.get("/disruptions/history", tags=["Disruptions"])
+def get_disruption_history(
+    limit: int = Query(default=50, ge=1, le=200, description="Max events to return."),
+):
+    """
+    Return the most recent disruption events from the Supabase database.
+    Ordered by timestamp DESC.
+    """
+    conn = get_connection()
     try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    event_id, affected_node, disruption_type,
+                    severity, timestamp, affected_shipment_count
+                FROM disruption_events
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (limit,))
 
-        cur.execute(
-            """
-            SELECT event_id, affected_node, disruption_type,
-                   severity, timestamp, affected_shipment_count
-            FROM disruption_events
-            ORDER BY timestamp DESC
-            LIMIT 50
-            """
-        )
-        rows = cur.fetchall()
-        cur.close()
+            rows    = cur.fetchall()
+            columns = [
+                "event_id", "affected_node", "disruption_type",
+                "severity", "timestamp", "affected_shipment_count",
+            ]
+            events = [dict(zip(columns, row)) for row in rows]
+
+        return {"count": len(events), "events": events}
+
+    except Exception as exc:
+        logger.error("get_disruption_history error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
         conn.close()
 
-        return [row_to_dict(r) for r in rows]
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch disruption history: {str(exc)}",
-        )
-
 
 # ---------------------------------------------------------------------------
-# ENDPOINT 10: POST /disruptions/auto
-# Triggers a single random disruption via the simulator.
-# Used by the frontend demo button for live disruption injection.
+# ENDPOINT 9: POST /disruptions/auto
 # ---------------------------------------------------------------------------
-@app.post("/disruptions/auto")
+@app.post("/disruptions/auto", tags=["Disruptions"])
 def auto_inject_disruption():
-    """Trigger a random disruption for demo purposes."""
+    """
+    Trigger a random auto-disruption at a randomly selected graph node.
+    Used by the frontend demo button to simulate live disruption events.
+    """
     try:
-        result = simulator.auto_inject_random()
-        return result
+        return simulator.auto_inject_random()
     except Exception as exc:
+        logger.error("auto_inject_disruption error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ===========================================================================
+# ================  DAY 3 -- AI AGENT ENDPOINTS  ============================
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 10: POST /agent/reroute  [NEW -- Day 3]
+# ---------------------------------------------------------------------------
+@app.post("/agent/reroute", tags=["Agent"])
+def run_agent_reroute(body: RerouteRequest):
+    """
+    Trigger the autonomous Groq-powered rerouting agent for a given shipment.
+
+    The agent executes a full ReAct loop:
+      1. Fetches shipment details and active disruptions.
+      2. Discovers k-shortest alternative paths via NetworkX.
+      3. Scores all candidates on risk, time, cost, and SLA impact.
+      4. Commits the optimal decision to Supabase with full justification.
+
+    Returns the agent's executive summary, tool calls made in sequence,
+    number of turns consumed, and whether a decision was committed.
+
+    Returns 404 if the shipment does not exist.
+
+    Note: This endpoint may take 10-30 seconds. The Groq API is called
+    synchronously within the ReAct loop.
+    """
+    # Fast pre-check: verify shipment exists before spending API calls
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT shipment_id FROM shipments WHERE shipment_id = %s",
+                (body.shipment_id,)
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Shipment '{body.shipment_id}' not found.",
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+    logger.info("API: triggering agent reroute for shipment %s", body.shipment_id)
+    try:
+        return agent.run(shipment_id=body.shipment_id)
+    except Exception as exc:
+        logger.error("Agent run failed for %s: %s", body.shipment_id, exc)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to auto-inject disruption: {str(exc)}",
+            detail=f"Agent failed to complete reroute evaluation: {exc}",
         )
 
 
 # ---------------------------------------------------------------------------
-# Direct execution — run with: python main.py
+# ENDPOINT 10.5: POST /agent/reroute/stream  [NEW -- Streaming]
+# ---------------------------------------------------------------------------
+@app.post("/agent/reroute/stream", tags=["Agent"])
+def stream_agent_reroute(body: RerouteRequest):
+    """
+    Trigger the autonomous Groq-powered rerouting agent for a given shipment
+    and return a Server-Sent Events (SSE) stream of its progress.
+    
+    Yields events: `text`, `tool_call`, `tool_result`, `done`, `error`.
+    """
+    # Fast pre-check: verify shipment exists
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT shipment_id FROM shipments WHERE shipment_id = %s",
+                (body.shipment_id,)
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Shipment '{body.shipment_id}' not found.",
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+    logger.info("API: triggering streaming agent reroute for shipment %s", body.shipment_id)
+    return StreamingResponse(
+        agent.stream(shipment_id=body.shipment_id),
+        media_type="text/event-stream"
+    )
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 11: GET /agent/decisions  [NEW -- Day 3]
+# ---------------------------------------------------------------------------
+@app.get("/agent/decisions", tags=["Agent"])
+def list_agent_decisions(
+    limit:       int = Query(default=20, ge=1, le=100, description="Max rows to return."),
+    offset:      int = Query(default=0,  ge=0,          description="Pagination offset."),
+    shipment_id: str = Query(default=None,               description="Filter by shipment ID."),
+):
+    """
+    List all committed agent rerouting decisions from Supabase.
+
+    Ordered by created_at DESC. Optionally filter by shipment_id to see
+    the full decision history for a specific shipment.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+
+            conditions = []
+            params     = []
+            if shipment_id is not None:
+                conditions.append("shipment_id = %s")
+                params.append(shipment_id)
+
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            cur.execute(f"""
+                SELECT
+                    decision_id, shipment_id, original_node,
+                    chosen_path, justification,
+                    cost_delta, time_delta_hrs, risk_delta,
+                    status, created_at
+                FROM reroute_decisions
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """, (*params, limit, offset))
+
+            rows    = cur.fetchall()
+            columns = [
+                "decision_id", "shipment_id", "original_node",
+                "chosen_path", "justification",
+                "cost_delta", "time_delta_hrs", "risk_delta",
+                "status", "created_at",
+            ]
+            decisions = []
+            for row in rows:
+                record = dict(zip(columns, row))
+                # Deserialise chosen_path from JSON string back to list
+                if isinstance(record.get("chosen_path"), str):
+                    try:
+                        record["chosen_path"] = json.loads(record["chosen_path"])
+                    except (ValueError, TypeError):
+                        pass
+                decisions.append(record)
+
+            cur.execute(
+                f"SELECT COUNT(*) FROM reroute_decisions {where_clause}",
+                params,
+            )
+            total = cur.fetchone()[0]
+
+        return {"total": total, "limit": limit, "offset": offset, "decisions": decisions}
+
+    except Exception as exc:
+        logger.error("list_agent_decisions error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 12: GET /agent/decisions/{decision_id}  [NEW -- Day 3]
+# ---------------------------------------------------------------------------
+@app.get("/agent/decisions/{decision_id}", tags=["Agent"])
+def get_agent_decision(decision_id: str):
+    """
+    Retrieve a single reroute decision by its decision_id.
+
+    Returns the full record including the agent's justification, chosen path
+    as an ordered node list, and all tradeoff deltas.
+    Returns 404 if no decision with the given ID exists.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    decision_id, shipment_id, original_node,
+                    chosen_path, justification,
+                    cost_delta, time_delta_hrs, risk_delta,
+                    status, created_at
+                FROM reroute_decisions
+                WHERE decision_id = %s
+            """, (decision_id,))
+
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Decision '{decision_id}' not found.",
+                )
+
+            columns = [
+                "decision_id", "shipment_id", "original_node",
+                "chosen_path", "justification",
+                "cost_delta", "time_delta_hrs", "risk_delta",
+                "status", "created_at",
+            ]
+            record = dict(zip(columns, row))
+
+            # Deserialise chosen_path
+            if isinstance(record.get("chosen_path"), str):
+                try:
+                    record["chosen_path"] = json.loads(record["chosen_path"])
+                except (ValueError, TypeError):
+                    pass
+
+        return record
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_agent_decision error [%s]: %s", decision_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Entry Point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info",
+    )
