@@ -10,6 +10,7 @@ import datetime
 import uuid
 from typing import Optional
 
+import psycopg2.extras
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,10 +63,10 @@ class DisruptionInjectRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helper: convert a sqlite3.Row to a plain dict
+# Helper: convert a psycopg2 RealDictRow to a plain dict
 # ---------------------------------------------------------------------------
 def row_to_dict(row) -> dict:
-    """Convert a sqlite3.Row object into a regular dictionary."""
+    """Convert a psycopg2 RealDictRow object into a regular dictionary."""
     return dict(row)
 
 
@@ -91,9 +92,10 @@ def root():
 def health_check():
     try:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) AS cnt FROM shipments")
-        total = cursor.fetchone()["cnt"]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT COUNT(*) AS cnt FROM shipments")
+        total = cur.fetchone()["cnt"]
+        cur.close()
         conn.close()
         return {
             "status": "healthy",
@@ -125,28 +127,29 @@ def list_shipments(
 ):
     try:
         conn = get_connection()
-        cursor = conn.cursor()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         query = "SELECT * FROM shipments WHERE 1=1"
         params: list = []
 
         if status is not None:
-            query += " AND status = ?"
+            query += " AND status = %s"
             params.append(status)
 
         if priority_tier is not None:
-            query += " AND priority_tier = ?"
+            query += " AND priority_tier = %s"
             params.append(priority_tier)
 
         if min_risk is not None:
-            query += " AND risk_score >= ?"
+            query += " AND risk_score >= %s"
             params.append(min_risk)
 
-        query += " ORDER BY risk_score DESC LIMIT ?"
+        query += " ORDER BY risk_score DESC LIMIT %s"
         params.append(limit)
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        cur.close()
         conn.close()
 
         return [row_to_dict(r) for r in rows]
@@ -171,34 +174,36 @@ def list_shipments(
 def get_shipment(shipment_id: str):
     try:
         conn = get_connection()
-        cursor = conn.cursor()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Fetch the shipment
-        cursor.execute("SELECT * FROM shipments WHERE shipment_id = ?", (shipment_id,))
-        shipment_row = cursor.fetchone()
+        cur.execute("SELECT * FROM shipments WHERE shipment_id = %s", (shipment_id,))
+        shipment_row = cur.fetchone()
 
         if shipment_row is None:
+            cur.close()
             conn.close()
             raise HTTPException(status_code=404, detail=f"Shipment {shipment_id} not found")
 
         shipment = row_to_dict(shipment_row)
 
         # Fetch the matching route edge for risk breakdown
-        cursor.execute(
-            "SELECT * FROM route_graph WHERE from_node = ? AND to_node = ?",
+        cur.execute(
+            "SELECT * FROM route_graph WHERE from_node = %s AND to_node = %s",
             (shipment["origin"], shipment["destination"]),
         )
-        edge_row = cursor.fetchone()
+        edge_row = cur.fetchone()
         edge_risk = row_to_dict(edge_row)["edge_risk_score"] if edge_row else 0.5
 
         # Fetch carrier reliability
-        cursor.execute(
-            "SELECT reliability_score FROM carriers WHERE carrier_id = ?",
+        cur.execute(
+            "SELECT reliability_score FROM carriers WHERE carrier_id = %s",
             (shipment["carrier_id"],),
         )
-        carrier_row = cursor.fetchone()
+        carrier_row = cur.fetchone()
         carrier_reliability = carrier_row["reliability_score"] if carrier_row else 0.7
 
+        cur.close()
         conn.close()
 
         # Compute individual risk contributions
@@ -271,10 +276,11 @@ def get_shipment(shipment_id: str):
 def get_graph():
     try:
         conn = get_connection()
-        cursor = conn.cursor()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cursor.execute("SELECT * FROM route_graph")
-        edge_rows = cursor.fetchall()
+        cur.execute("SELECT * FROM route_graph")
+        edge_rows = cur.fetchall()
+        cur.close()
         conn.close()
 
         edges = [row_to_dict(r) for r in edge_rows]
@@ -309,39 +315,39 @@ def get_graph():
 def inject_disruption(body: DisruptionInjectRequest):
     try:
         conn = get_connection()
-        cursor = conn.cursor()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Generate a unique event ID and current timestamp
         event_id = f"EVT_{uuid.uuid4().hex[:8].upper()}"
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         # --- Step 1: Count directly affected shipments at node -----------
-        cursor.execute(
-            "SELECT COUNT(*) AS cnt FROM shipments WHERE current_node = ?",
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM shipments WHERE current_node = %s",
             (body.node_id,),
         )
-        direct_count = cursor.fetchone()["cnt"]
+        direct_count = cur.fetchone()["cnt"]
 
         # --- Step 2: Update risk_score for shipments sitting at the node --
-        cursor.execute(
+        cur.execute(
             """
             UPDATE shipments
-            SET risk_score = MIN(risk_score + ? * 0.3, 1.0)
-            WHERE current_node = ?
+            SET risk_score = LEAST(risk_score + %s * 0.3, 1.0)
+            WHERE current_node = %s
             """,
             (body.severity, body.node_id),
         )
 
         # --- Step 3: Find downstream shipments via connected edges --------
         # An edge is "connected" to the node if it starts or ends there.
-        cursor.execute(
+        cur.execute(
             """
             SELECT from_node, to_node FROM route_graph
-            WHERE from_node = ? OR to_node = ?
+            WHERE from_node = %s OR to_node = %s
             """,
             (body.node_id, body.node_id),
         )
-        connected_edges = cursor.fetchall()
+        connected_edges = cur.fetchall()
 
         # Collect all connected node names (excluding the disrupted node)
         connected_nodes: set[str] = set()
@@ -352,20 +358,20 @@ def inject_disruption(body: DisruptionInjectRequest):
 
         downstream_count = 0
         if connected_nodes:
-            placeholders = ",".join("?" for _ in connected_nodes)
+            placeholders = ",".join("%s" for _ in connected_nodes)
 
             # Count downstream shipments
-            cursor.execute(
+            cur.execute(
                 f"SELECT COUNT(*) AS cnt FROM shipments WHERE current_node IN ({placeholders})",
                 list(connected_nodes),
             )
-            downstream_count = cursor.fetchone()["cnt"]
+            downstream_count = cur.fetchone()["cnt"]
 
             # Update their risk scores
-            cursor.execute(
+            cur.execute(
                 f"""
                 UPDATE shipments
-                SET risk_score = MIN(risk_score + ? * 0.15, 1.0)
+                SET risk_score = LEAST(risk_score + %s * 0.15, 1.0)
                 WHERE current_node IN ({placeholders})
                 """,
                 [body.severity] + list(connected_nodes),
@@ -373,16 +379,17 @@ def inject_disruption(body: DisruptionInjectRequest):
 
         # --- Step 4: Log the disruption event -----------------------------
         total_affected = direct_count + downstream_count
-        cursor.execute(
+        cur.execute(
             """
             INSERT INTO disruption_events
                 (event_id, affected_node, disruption_type, severity, timestamp, affected_shipment_count)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (event_id, body.node_id, body.disruption_type, body.severity, now_iso, total_affected),
         )
 
         conn.commit()
+        cur.close()
         conn.close()
 
         return {

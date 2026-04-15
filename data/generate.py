@@ -1,15 +1,18 @@
 """
 generate.py
 
-This script generates realistic synthetic data and seeds it into the SQLite
-database at backend/supply_chain.db. It covers trade lanes, routing edges,
+This script generates realistic synthetic data and seeds it into the
+Supabase PostgreSQL database. It covers trade lanes, routing edges,
 carriers, shipments, and disruption events for the supply-chain-sentinel system.
 """
 
-import sqlite3
+import psycopg2
+import os
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../backend/.env'))
+
 import random
 import datetime
-import os
 import uuid
 import json
 import sys
@@ -21,9 +24,6 @@ if sys.stdout.encoding.lower() != "utf-8":
 # Use a RANDOM SEED of 42 at the top for reproducibility
 random.seed(42)
 
-# Set up paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.abspath(os.path.join(BASE_DIR, '..', 'backend', 'supply_chain.db'))
 
 def main():
     print("Generating trade lanes...")
@@ -166,39 +166,40 @@ def main():
         
         events.append((ev_id, node, dtype, sev, ts, count))
 
-    # Connect to the database and clear existing data
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    # Connect to the Supabase PostgreSQL database and clear existing data
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+    cur = conn.cursor()
     
-    cursor.execute("DELETE FROM shipments")
-    cursor.execute("DELETE FROM carriers")
-    cursor.execute("DELETE FROM trade_lanes")
-    cursor.execute("DELETE FROM route_graph")
-    cursor.execute("DELETE FROM disruption_events")
+    cur.execute("DELETE FROM shipments")
+    cur.execute("DELETE FROM carriers")
+    cur.execute("DELETE FROM trade_lanes")
+    cur.execute("DELETE FROM route_graph")
+    cur.execute("DELETE FROM disruption_events")
 
     # Insert new seeded data
-    cursor.executemany(
-        "INSERT INTO trade_lanes (lane_id, origin_port, destination_port, mode, base_transit_days, congestion_index, weather_risk, geopolitical_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    cur.executemany(
+        "INSERT INTO trade_lanes (lane_id, origin_port, destination_port, mode, base_transit_days, congestion_index, weather_risk, geopolitical_score) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         trade_lanes
     )
-    cursor.executemany(
-        "INSERT INTO route_graph (edge_id, from_node, to_node, mode, distance_km, base_transit_days, congestion_index, weather_risk, geopolitical_score, edge_risk_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    cur.executemany(
+        "INSERT INTO route_graph (edge_id, from_node, to_node, mode, distance_km, base_transit_days, congestion_index, weather_risk, geopolitical_score, edge_risk_score) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         edges
     )
-    cursor.executemany(
-        "INSERT INTO carriers (carrier_id, carrier_name, reliability_score, active_lanes) VALUES (?, ?, ?, ?)",
+    cur.executemany(
+        "INSERT INTO carriers (carrier_id, carrier_name, reliability_score, active_lanes) VALUES (%s, %s, %s, %s)",
         carriers
     )
-    cursor.executemany(
-        "INSERT INTO shipments (shipment_id, origin, destination, current_node, cargo_type, priority_tier, sla_deadline, estimated_arrival, carrier_id, status, risk_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    cur.executemany(
+        "INSERT INTO shipments (shipment_id, origin, destination, current_node, cargo_type, priority_tier, sla_deadline, estimated_arrival, carrier_id, status, risk_score) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         shipments
     )
-    cursor.executemany(
-        "INSERT INTO disruption_events (event_id, affected_node, disruption_type, severity, timestamp, affected_shipment_count) VALUES (?, ?, ?, ?, ?, ?)",
+    cur.executemany(
+        "INSERT INTO disruption_events (event_id, affected_node, disruption_type, severity, timestamp, affected_shipment_count) VALUES (%s, %s, %s, %s, %s, %s)",
         events
     )
 
     conn.commit()
+    cur.close()
     conn.close()
 
     print("✓ Database seeded successfully!")

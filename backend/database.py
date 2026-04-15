@@ -1,100 +1,145 @@
-import sqlite3
+"""
+database.py — Supabase PostgreSQL Database Module
+==================================================
+Handles connection management and schema initialization for the
+supply-chain-sentinel project using psycopg2 and Supabase PostgreSQL.
+"""
+
 import os
+import psycopg2
+from dotenv import load_dotenv
 
-# Determine the absolute path to the database file within the backend directory
+# ---------------------------------------------------------------------------
+# Load environment variables from the .env file located in this directory
+# ---------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "supply_chain.db")
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-def get_connection() -> sqlite3.Connection:
+
+def get_connection():
     """
-    Establish and return a connection to the SQLite database.
-    Sets row_factory to sqlite3.Row to allow dictionary-like access to columns.
+    Establish and return a connection to the Supabase PostgreSQL database.
+    Reads DATABASE_URL from environment variables loaded via python-dotenv.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"))
     return conn
+
 
 def init_db() -> None:
     """
-    Initialize the database by creating necessary tables if they do not exist.
+    Initialize the database by creating all 5 tables and performance indexes.
+    Uses IF NOT EXISTS so it is safe to call repeatedly.
     """
     conn = get_connection()
-    cursor = conn.cursor()
+    cur = conn.cursor()
 
-    # TABLE 1: shipments
-    cursor.execute('''
+    # ------------------------------------------------------------------
+    # TABLE 1: shipments — core shipment tracking data
+    # ------------------------------------------------------------------
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS shipments (
-            shipment_id TEXT PRIMARY KEY,
-            origin TEXT NOT NULL,
-            destination TEXT NOT NULL,
-            current_node TEXT,
-            cargo_type TEXT,
-            priority_tier INTEGER CHECK(priority_tier IN (1, 2, 3)),
-            sla_deadline TEXT,
+            shipment_id   TEXT PRIMARY KEY,
+            origin        TEXT,
+            destination   TEXT,
+            current_node  TEXT,
+            cargo_type    TEXT,
+            priority_tier INTEGER,
+            sla_deadline  TEXT,
             estimated_arrival TEXT,
-            carrier_id TEXT,
-            status TEXT CHECK(status IN ('in_transit', 'delayed', 'delivered')),
-            risk_score REAL CHECK(risk_score >= 0.0 AND risk_score <= 1.0)
-        )
-    ''')
+            carrier_id    TEXT,
+            status        TEXT,
+            risk_score    REAL
+        );
+    """)
 
-    # TABLE 2: carriers
-    cursor.execute('''
+    # ------------------------------------------------------------------
+    # TABLE 2: carriers — carrier metadata and reliability
+    # ------------------------------------------------------------------
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS carriers (
-            carrier_id TEXT PRIMARY KEY,
-            carrier_name TEXT NOT NULL,
+            carrier_id        TEXT PRIMARY KEY,
+            carrier_name      TEXT,
             reliability_score REAL,
-            active_lanes TEXT
-        )
-    ''')
+            active_lanes      TEXT
+        );
+    """)
 
-    # TABLE 3: trade_lanes
-    cursor.execute('''
+    # ------------------------------------------------------------------
+    # TABLE 3: trade_lanes — shipping lane characteristics
+    # ------------------------------------------------------------------
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS trade_lanes (
-            lane_id TEXT PRIMARY KEY,
-            origin_port TEXT NOT NULL,
-            destination_port TEXT NOT NULL,
-            mode TEXT CHECK(mode IN ('sea', 'rail', 'air', 'road')),
-            base_transit_days INTEGER,
-            congestion_index REAL,
-            weather_risk REAL,
+            lane_id            TEXT PRIMARY KEY,
+            origin_port        TEXT,
+            destination_port   TEXT,
+            mode               TEXT,
+            base_transit_days  INTEGER,
+            congestion_index   REAL,
+            weather_risk       REAL,
             geopolitical_score REAL
-        )
-    ''')
+        );
+    """)
 
-    # TABLE 4: route_graph
-    cursor.execute('''
+    # ------------------------------------------------------------------
+    # TABLE 4: route_graph — network edges with risk metrics
+    # ------------------------------------------------------------------
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS route_graph (
-            edge_id TEXT PRIMARY KEY,
-            from_node TEXT NOT NULL,
-            to_node TEXT NOT NULL,
-            mode TEXT,
-            distance_km REAL,
-            base_transit_days INTEGER,
-            congestion_index REAL,
-            weather_risk REAL,
+            edge_id            TEXT PRIMARY KEY,
+            from_node          TEXT,
+            to_node            TEXT,
+            mode               TEXT,
+            distance_km        REAL,
+            base_transit_days  INTEGER,
+            congestion_index   REAL,
+            weather_risk       REAL,
             geopolitical_score REAL,
-            edge_risk_score REAL
-        )
-    ''')
+            edge_risk_score    REAL
+        );
+    """)
 
-    # TABLE 5: disruption_events
-    cursor.execute('''
+    # ------------------------------------------------------------------
+    # TABLE 5: disruption_events — recorded disruption incidents
+    # ------------------------------------------------------------------
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS disruption_events (
-            event_id TEXT PRIMARY KEY,
-            affected_node TEXT NOT NULL,
-            disruption_type TEXT NOT NULL,
-            severity REAL,
-            timestamp TEXT,
+            event_id                TEXT PRIMARY KEY,
+            affected_node           TEXT,
+            disruption_type         TEXT,
+            severity                REAL,
+            timestamp               TEXT,
             affected_shipment_count INTEGER
-        )
-    ''')
+        );
+    """)
 
-    # Save changes and close the physical connection
+    # ------------------------------------------------------------------
+    # INDEXES — speed up common queries on shipments table
+    # ------------------------------------------------------------------
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_shipments_risk
+        ON shipments(risk_score DESC);
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_shipments_status
+        ON shipments(status);
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_shipments_priority
+        ON shipments(priority_tier);
+    """)
+
+    # Commit all DDL changes and close resources
     conn.commit()
+    cur.close()
     conn.close()
 
+
+# ---------------------------------------------------------------------------
+# Direct execution: initialize the database and confirm success
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # If this module is run directly, initialize the database.
     init_db()
-    print(f"Database successfully initialized at {DB_PATH}")
+    print("Supabase database initialized successfully")
+    print("Tables created: shipments, carriers, trade_lanes, route_graph, disruption_events")
