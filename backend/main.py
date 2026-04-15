@@ -17,11 +17,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from database import get_connection, init_db
+from disruption_simulator import DisruptionSimulator
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env
 # ---------------------------------------------------------------------------
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Module-level DisruptionSimulator instance shared across endpoints
+# ---------------------------------------------------------------------------
+simulator = DisruptionSimulator()
 
 # ---------------------------------------------------------------------------
 # FastAPI application instance
@@ -300,106 +306,94 @@ def get_graph():
 
 
 # ---------------------------------------------------------------------------
-# ENDPOINT 6: POST /disruptions/inject
-# Simulates a real-world disruption at a specific node.
+# ENDPOINT 7: POST /disruptions/inject
+# Injects a disruption at a graph node using the DisruptionSimulator.
+# The simulator validates inputs, computes cascade impact, logs to DB,
+# and tracks the disruption in memory.
 #
-# Steps performed:
-#   1. Insert a new disruption_events record.
-#   2. Find shipments whose current_node matches the affected node and
-#      increase their risk_score by severity × 0.3 (capped at 1.0).
-#   3. Find shipments on edges connected to the affected node and
-#      increase their risk_score by severity × 0.15 (capped at 1.0).
-#   4. Return counts of directly and downstream-affected shipments.
+# Returns 400 if node_id is not found in the graph.
+# Returns 422 if severity is not between 0.0 and 1.0.
 # ---------------------------------------------------------------------------
 @app.post("/disruptions/inject")
 def inject_disruption(body: DisruptionInjectRequest):
+    """Inject a disruption event via the DisruptionSimulator."""
+    try:
+        result = simulator.inject(
+            node_id=body.node_id,
+            severity=body.severity,
+            disruption_type=body.disruption_type,
+        )
+        return result
+    except ValueError as ve:
+        error_msg = str(ve)
+        # Distinguish between invalid severity and missing node
+        if "Severity" in error_msg:
+            raise HTTPException(status_code=422, detail=error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to inject disruption: {str(exc)}")
+
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 8: GET /disruptions/active
+# Returns the list of currently active (un-cleared) disruptions.
+# Returns an empty list if no disruptions are active.
+# ---------------------------------------------------------------------------
+@app.get("/disruptions/active")
+def get_active_disruptions():
+    """Return all active disruptions tracked by the simulator."""
+    return simulator.get_active_disruptions()
+
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 9: GET /disruptions/history
+# Queries the disruption_events table from Supabase and returns the
+# last 50 events ordered by timestamp descending.
+# ---------------------------------------------------------------------------
+@app.get("/disruptions/history")
+def get_disruption_history():
+    """Fetch the 50 most recent disruption events from the database."""
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Generate a unique event ID and current timestamp
-        event_id = f"EVT_{uuid.uuid4().hex[:8].upper()}"
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-        # --- Step 1: Count directly affected shipments at node -----------
-        cur.execute(
-            "SELECT COUNT(*) AS cnt FROM shipments WHERE current_node = %s",
-            (body.node_id,),
-        )
-        direct_count = cur.fetchone()["cnt"]
-
-        # --- Step 2: Update risk_score for shipments sitting at the node --
         cur.execute(
             """
-            UPDATE shipments
-            SET risk_score = LEAST(risk_score + %s * 0.3, 1.0)
-            WHERE current_node = %s
-            """,
-            (body.severity, body.node_id),
-        )
-
-        # --- Step 3: Find downstream shipments via connected edges --------
-        # An edge is "connected" to the node if it starts or ends there.
-        cur.execute(
+            SELECT event_id, affected_node, disruption_type,
+                   severity, timestamp, affected_shipment_count
+            FROM disruption_events
+            ORDER BY timestamp DESC
+            LIMIT 50
             """
-            SELECT from_node, to_node FROM route_graph
-            WHERE from_node = %s OR to_node = %s
-            """,
-            (body.node_id, body.node_id),
         )
-        connected_edges = cur.fetchall()
-
-        # Collect all connected node names (excluding the disrupted node)
-        connected_nodes: set[str] = set()
-        for edge in connected_edges:
-            connected_nodes.add(edge["from_node"])
-            connected_nodes.add(edge["to_node"])
-        connected_nodes.discard(body.node_id)
-
-        downstream_count = 0
-        if connected_nodes:
-            placeholders = ",".join("%s" for _ in connected_nodes)
-
-            # Count downstream shipments
-            cur.execute(
-                f"SELECT COUNT(*) AS cnt FROM shipments WHERE current_node IN ({placeholders})",
-                list(connected_nodes),
-            )
-            downstream_count = cur.fetchone()["cnt"]
-
-            # Update their risk scores
-            cur.execute(
-                f"""
-                UPDATE shipments
-                SET risk_score = LEAST(risk_score + %s * 0.15, 1.0)
-                WHERE current_node IN ({placeholders})
-                """,
-                [body.severity] + list(connected_nodes),
-            )
-
-        # --- Step 4: Log the disruption event -----------------------------
-        total_affected = direct_count + downstream_count
-        cur.execute(
-            """
-            INSERT INTO disruption_events
-                (event_id, affected_node, disruption_type, severity, timestamp, affected_shipment_count)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (event_id, body.node_id, body.disruption_type, body.severity, now_iso, total_affected),
-        )
-
-        conn.commit()
+        rows = cur.fetchall()
         cur.close()
         conn.close()
 
-        return {
-            "event_id": event_id,
-            "affected_shipments_direct": direct_count,
-            "affected_shipments_downstream": downstream_count,
-            "message": "Disruption injected successfully",
-        }
+        return [row_to_dict(r) for r in rows]
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to inject disruption: {str(exc)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch disruption history: {str(exc)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# ENDPOINT 10: POST /disruptions/auto
+# Triggers a single random disruption via the simulator.
+# Used by the frontend demo button for live disruption injection.
+# ---------------------------------------------------------------------------
+@app.post("/disruptions/auto")
+def auto_inject_disruption():
+    """Trigger a random disruption for demo purposes."""
+    try:
+        result = simulator.auto_inject_random()
+        return result
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to auto-inject disruption: {str(exc)}",
+        )
 
 
 # ---------------------------------------------------------------------------
