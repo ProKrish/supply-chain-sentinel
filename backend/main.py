@@ -29,10 +29,23 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Rate limiting via slowapi
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Auth dependencies
+from auth import (
+    get_current_user,
+    require_manager,
+    require_analyst,
+    get_optional_user,
+)
 
 from agent import ReroutingAgent
 from database import get_connection, init_db
@@ -92,6 +105,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiter configuration
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded, _rate_limit_exceeded_handler
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],    # Tighten this in production
@@ -120,7 +140,8 @@ class RerouteRequest(BaseModel):
 # ENDPOINT 1: GET /
 # ---------------------------------------------------------------------------
 @app.get("/", tags=["Core"])
-def root():
+@limiter.limit("60/minute")
+def root(request: Request):
     """
     Project info and quick-link index.
     Returns the project name, version, and a list of all available endpoints.
@@ -150,7 +171,8 @@ def root():
 # ENDPOINT 2: GET /health
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["Core"])
-def health_check():
+@limiter.limit("60/minute")
+def health_check(request: Request):
     """
     Deep health check -- verifies Supabase connectivity and graph state.
 
@@ -199,11 +221,14 @@ def health_check():
 # ENDPOINT 3: GET /shipments
 # ---------------------------------------------------------------------------
 @app.get("/shipments", tags=["Shipments"])
+@limiter.limit("30/minute")
 def list_shipments(
+    request: Request,
     limit:    int   = Query(default=50,  ge=1, le=500, description="Max rows to return."),
     offset:   int   = Query(default=0,   ge=0,          description="Pagination offset."),
     status:   str   = Query(default=None,               description="Filter by status."),
     min_risk: float = Query(default=None, ge=0.0, le=1.0, description="Minimum risk_score filter."),
+    current_user: dict = Depends(require_analyst),
 ):
     """
     List active shipments with optional filters and pagination.
@@ -259,7 +284,8 @@ def list_shipments(
 # ENDPOINT 4: GET /shipments/{shipment_id}
 # ---------------------------------------------------------------------------
 @app.get("/shipments/{shipment_id}", tags=["Shipments"])
-def get_shipment(shipment_id: str):
+@limiter.limit("60/minute")
+def get_shipment(shipment_id: str, request: Request, current_user: dict = Depends(require_analyst)):
     """
     Retrieve a single shipment with a full risk breakdown including adjacent
     edge risks, active disruptions, and carrier reliability score.
@@ -375,7 +401,8 @@ def get_shipment(shipment_id: str):
 # ENDPOINT 5: GET /graph
 # ---------------------------------------------------------------------------
 @app.get("/graph", tags=["Graph"])
-def get_graph_data():
+@limiter.limit("20/minute")
+def get_graph_data(request: Request, current_user: dict = Depends(require_analyst)):
     """
     Return the full route graph as a node/edge JSON payload for the frontend map.
     Served from the in-memory NetworkX singleton -- no DB query.
@@ -406,7 +433,8 @@ def get_graph_data():
 # ENDPOINT 6: POST /disruptions/inject
 # ---------------------------------------------------------------------------
 @app.post("/disruptions/inject", tags=["Disruptions"])
-def inject_disruption(body: DisruptionInjectRequest):
+@limiter.limit("10/minute")
+def inject_disruption(body: DisruptionInjectRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
     Manually inject a disruption event at a specific graph node.
     Triggers cascade impact calculation and updates downstream shipment risks.
@@ -433,7 +461,8 @@ def inject_disruption(body: DisruptionInjectRequest):
 # ENDPOINT 7: GET /disruptions/active
 # ---------------------------------------------------------------------------
 @app.get("/disruptions/active", tags=["Disruptions"])
-def get_active_disruptions():
+@limiter.limit("30/minute")
+def get_active_disruptions(request: Request, current_user: dict = Depends(require_analyst)):
     """
     Return all disruptions currently held in the simulator's in-memory state.
     Returns an empty list if no disruptions are active.
@@ -448,8 +477,11 @@ def get_active_disruptions():
 # ENDPOINT 8: GET /disruptions/history
 # ---------------------------------------------------------------------------
 @app.get("/disruptions/history", tags=["Disruptions"])
+@limiter.limit("30/minute")
 def get_disruption_history(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=200, description="Max events to return."),
+    current_user: dict = Depends(require_analyst),
 ):
     """
     Return the most recent disruption events from the Supabase database.
@@ -487,7 +519,8 @@ def get_disruption_history(
 # ENDPOINT 9: POST /disruptions/auto
 # ---------------------------------------------------------------------------
 @app.post("/disruptions/auto", tags=["Disruptions"])
-def auto_inject_disruption():
+@limiter.limit("5/minute")
+def auto_inject_disruption(request: Request, current_user: dict = Depends(require_manager)):
     """
     Trigger a random auto-disruption at a randomly selected graph node.
     Used by the frontend demo button to simulate live disruption events.
@@ -508,7 +541,8 @@ def auto_inject_disruption():
 # ENDPOINT 10: POST /agent/reroute  [NEW -- Day 3]
 # ---------------------------------------------------------------------------
 @app.post("/agent/reroute", tags=["Agent"])
-def run_agent_reroute(body: RerouteRequest):
+@limiter.limit("5/minute")
+def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
     Trigger the autonomous Groq-powered rerouting agent for a given shipment.
 
@@ -561,11 +595,12 @@ def run_agent_reroute(body: RerouteRequest):
 # ENDPOINT 10.5: POST /agent/reroute/stream  [NEW -- Streaming]
 # ---------------------------------------------------------------------------
 @app.post("/agent/reroute/stream", tags=["Agent"])
-def stream_agent_reroute(body: RerouteRequest):
+@limiter.limit("5/minute")
+def stream_agent_reroute(body: RerouteRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
     Trigger the autonomous Groq-powered rerouting agent for a given shipment
     and return a Server-Sent Events (SSE) stream of its progress.
-    
+
     Yields events: `text`, `tool_call`, `tool_result`, `done`, `error`.
     """
     # Fast pre-check: verify shipment exists
@@ -598,10 +633,13 @@ def stream_agent_reroute(body: RerouteRequest):
 # ENDPOINT 11: GET /agent/decisions  [NEW -- Day 3]
 # ---------------------------------------------------------------------------
 @app.get("/agent/decisions", tags=["Agent"])
+@limiter.limit("20/minute")
 def list_agent_decisions(
+    request: Request,
     limit:       int = Query(default=20, ge=1, le=100, description="Max rows to return."),
     offset:      int = Query(default=0,  ge=0,          description="Pagination offset."),
     shipment_id: str = Query(default=None,               description="Filter by shipment ID."),
+    current_user: dict = Depends(require_analyst),
 ):
     """
     List all committed agent rerouting decisions from Supabase.
@@ -670,7 +708,8 @@ def list_agent_decisions(
 # ENDPOINT 12: GET /agent/decisions/{decision_id}  [NEW -- Day 3]
 # ---------------------------------------------------------------------------
 @app.get("/agent/decisions/{decision_id}", tags=["Agent"])
-def get_agent_decision(decision_id: str):
+@limiter.limit("20/minute")
+def get_agent_decision(decision_id: str, request: Request, current_user: dict = Depends(require_analyst)):
     """
     Retrieve a single reroute decision by its decision_id.
 
@@ -725,13 +764,33 @@ def get_agent_decision(decision_id: str):
 
 
 # ---------------------------------------------------------------------------
+# ENDPOINT 13: GET /me  [NEW -- User Profile]
+# ---------------------------------------------------------------------------
+@app.get("/me", tags=["Auth"])
+@limiter.limit("60/minute")
+def get_current_user_profile(request: Request, current_user: dict = Depends(require_analyst)):
+    """
+    Return the authenticated user's profile information.
+
+    Returns user ID, email, roles, and authentication status.
+    Requires any authenticated user (analyst or manager).
+    """
+    return {
+        "sub":             current_user["sub"],
+        "email":           current_user.get("email", ""),
+        "roles":           current_user.get("https://supply-chain-sentinel/roles", []),
+        "authenticated":   True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8002,
         reload=True,
         log_level="info",
     )
