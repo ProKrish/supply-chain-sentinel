@@ -23,4 +23,9 @@ Thumbs.db
 # Python eggs
 *.egg-info/
 dist/
-build/
+build/"venv/" 
+".env" 
+"*.db" 
+"frontend/node_modules/" 
+"frontend/.env" 
+"frontend/dist/" 

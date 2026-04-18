@@ -86,7 +86,11 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting up Supply Chain Sentinel ...")
     init_db()
-    get_graph()     # Pre-warm the graph singleton
+    try:
+        get_graph()
+        print("[GRAPH] Graph pre-warmed OK")
+    except Exception as e:
+        print(f"[GRAPH] WARNING: Could not pre-warm graph: {e}")     # Pre-warm the graph singleton
     logger.info("Startup complete -- all systems nominal.")
     yield
     logger.info("Shutting down Supply Chain Sentinel.")
