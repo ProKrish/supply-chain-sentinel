@@ -11,6 +11,7 @@ with the cursor pattern and %s parameter placeholders.
 """
 
 import datetime
+import logging
 import random
 import threading
 import uuid
@@ -21,6 +22,8 @@ import psycopg2.extras
 from database import get_connection
 from risk_engine import get_graph
 from risk_propagator import calculate_cascade_impact
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -96,38 +99,71 @@ class DisruptionSimulator:
             )
 
         # --- Calculate cascade impact ----------------------------------
-        cascade_result = calculate_cascade_impact(node_id, severity)
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        try:
+            cascade_result = calculate_cascade_impact(node_id, severity)
+        except Exception as exc:
+            logger.exception("Cascade impact failed for node '%s': %s", node_id, exc)
+            cascade_result = {
+                "source_node": node_id,
+                "severity": severity,
+                "edges_affected": 0,
+                "shipments_affected": 0,
+                "propagation_details": [],
+                "timestamp": now_iso,
+                "warning": f"Cascade update failed: {exc}",
+            }
 
         # --- Build event record ----------------------------------------
         event_id = f"EVT_{uuid.uuid4().hex[:8].upper()}"
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
         affected_shipment_count = cascade_result.get("shipments_affected", 0)
 
         # --- Persist to disruption_events table ------------------------
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        db_persisted = True
+        db_error = None
+        conn = None
+        cur = None
+        try:
+            conn = get_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cur.execute(
-            """
-            INSERT INTO disruption_events
-                (event_id, affected_node, disruption_type,
-                 severity, timestamp, affected_shipment_count)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                event_id,
-                node_id,
-                disruption_type,
-                severity,
-                now_iso,
-                affected_shipment_count,
-            ),
-        )
-
-        conn.commit()
-        cur.close()
-        conn.close()
+            cur.execute(
+                """
+                INSERT INTO disruption_events
+                    (event_id, affected_node, disruption_type,
+                     severity, timestamp, affected_shipment_count)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    event_id,
+                    node_id,
+                    disruption_type,
+                    severity,
+                    now_iso,
+                    affected_shipment_count,
+                ),
+            )
+            conn.commit()
+        except Exception as exc:
+            db_persisted = False
+            db_error = str(exc)
+            logger.exception("Failed to persist disruption event [%s]: %s", event_id, exc)
+            try:
+                if conn:
+                    conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                if cur:
+                    cur.close()
+            except Exception:
+                pass
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
 
         # --- Build result dict -----------------------------------------
         result: Dict[str, Any] = {
@@ -137,7 +173,10 @@ class DisruptionSimulator:
             "severity": severity,
             "cascade_result": cascade_result,
             "timestamp": now_iso,
+            "db_persisted": db_persisted,
         }
+        if db_error:
+            result["db_error"] = db_error
 
         # --- Track in memory -------------------------------------------
         self.active_disruptions.append(result)

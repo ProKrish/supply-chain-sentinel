@@ -227,13 +227,13 @@ export default function Analytics() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-white">
+    <div role="main" className="min-h-screen bg-[#0f172a] text-white">
       <AppHeader />
 
       <div className="pt-20 px-6 pb-6">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-white">Analytics</h1>
-          <p className="text-slate-400 mt-1">Network Risk Intelligence</p>
+          <p className="text-slate-300 mt-1">Network Risk Intelligence</p>
         </div>
 
         {error && (
@@ -242,7 +242,7 @@ export default function Analytics() {
           </div>
         )}
 
-        <section className="w-full bg-[#1e293b] rounded-xl p-4 mb-6 border border-[#334155]">
+        <section aria-label="Risk trend chart over last 24 hours" className="w-full bg-[#1e293b] rounded-xl p-4 mb-6 border border-[#334155]">
           <h2 className="text-lg font-semibold mb-4">Network Risk Score \u2014 Last 24 Hours</h2>
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={trendData}>
@@ -270,7 +270,7 @@ export default function Analytics() {
           </ResponsiveContainer>
         </section>
 
-        <section className="w-full bg-[#1e293b] rounded-xl p-4 mb-6 border border-[#334155]">
+        <section aria-label="Trade lane risk table" className="w-full bg-[#1e293b] rounded-xl p-4 mb-6 border border-[#334155]">
           <h2 className="text-lg font-semibold mb-4">Trade Lane Risk Breakdown</h2>
           {isLoading ? (
             <p className="text-slate-300 text-sm">Loading...</p>
@@ -278,7 +278,7 @@ export default function Analytics() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[980px] text-sm">
                 <thead>
-                  <tr className="text-left text-slate-400 border-b border-[#334155]">
+                  <tr className="text-left text-slate-300 border-b border-[#334155]">
                     <th className="py-2 pr-2">Lane</th>
                     <th className="py-2 px-2">Mode</th>
                     <th className="py-2 px-2">Congestion</th>
@@ -289,7 +289,18 @@ export default function Analytics() {
                 </thead>
                 <tbody>
                   {tradeLaneRows.map((row) => (
-                    <tr key={`${row.lane}-${row.mode}`} className="border-b border-[#334155]/60">
+                    <tr
+                      key={`${row.lane}-${row.mode}`}
+                      tabIndex={0}
+                      role="button"
+                      onClick={() => navigate('/dashboard')}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.currentTarget.click();
+                        }
+                      }}
+                      className="border-b border-[#334155]/60 cursor-pointer focus:outline focus:outline-2 focus:outline-cyan-400"
+                    >
                       <td className="py-3 pr-2 text-slate-100 whitespace-nowrap">{row.lane}</td>
                       <td className="py-3 px-2 text-lg" title={row.mode}>
                         {MODE_ICON[row.mode] || '\u{1F69B}'}
@@ -304,7 +315,7 @@ export default function Analytics() {
                   ))}
                   {tradeLaneRows.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-4 text-slate-400 text-center">No lane data available.</td>
+                      <td colSpan={6} className="py-4 text-slate-300 text-center">No lane data available.</td>
                     </tr>
                   )}
                 </tbody>
@@ -314,7 +325,7 @@ export default function Analytics() {
         </section>
 
         <section className="grid grid-cols-1 xl:grid-cols-5 gap-6 mb-6">
-          <div className="xl:col-span-3 bg-[#1e293b] rounded-xl p-4 border border-[#334155]">
+          <div aria-label="Shipment status distribution chart" className="xl:col-span-3 bg-[#1e293b] rounded-xl p-4 border border-[#334155]">
             <h2 className="text-lg font-semibold mb-4">Shipment Status Breakdown</h2>
             {isLoading ? (
               <p className="text-slate-300 text-sm">Loading...</p>
@@ -383,14 +394,14 @@ export default function Analytics() {
                   );
                 })}
                 {topRiskShipments.length === 0 && (
-                  <p className="text-slate-400 text-sm">No shipment data available.</p>
+                  <p className="text-slate-300 text-sm">No shipment data available.</p>
                 )}
               </div>
             )}
           </div>
         </section>
 
-        <section className="w-full bg-[#1e293b] rounded-xl p-4 border border-[#334155]">
+        <section aria-label="Carrier reliability comparison chart" className="w-full bg-[#1e293b] rounded-xl p-4 border border-[#334155]">
           <h2 className="text-lg font-semibold mb-4">Carrier Reliability Scores</h2>
           {isLoading ? (
             <p className="text-slate-300 text-sm">Loading...</p>

@@ -410,25 +410,37 @@ def inject_disruption(body: DisruptionInjectRequest, request: Request, current_u
     Triggers cascade impact calculation and updates downstream shipment risks.
     Returns 400 if node_id is not in the route graph.
     """
-    try:
-        graph = get_graph()
-        if body.node_id not in graph:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Node '{body.node_id}' not found in route graph. "
-                    f"Sample nodes: {sorted(list(graph.nodes()))[:10]}"
-                ),
-            )
+    graph = get_graph()
+    if graph is None:
+        raise HTTPException(status_code=503, detail="Route graph is not loaded.")
 
-        try:
-            return simulator.inject(body.node_id, body.severity, body.disruption_type)
-        except Exception as exc:
-            logger.error("inject_disruption error: %s", exc)
-            raise HTTPException(status_code=500, detail=str(exc))
-    except Exception as e:
-        print(f"INJECT ERROR: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    requested_node = (body.node_id or "").strip()
+    if not requested_node:
+        raise HTTPException(status_code=400, detail="node_id is required.")
+
+    resolved_node = requested_node if graph.has_node(requested_node) else next(
+        (node for node in graph.nodes() if str(node).lower() == requested_node.lower()),
+        None,
+    )
+
+    if resolved_node is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Node '{body.node_id}' not found in route graph. "
+                f"Sample nodes: {sorted(list(graph.nodes()))[:10]}"
+            ),
+        )
+
+    try:
+        return simulator.inject(str(resolved_node), float(body.severity), body.disruption_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("inject_disruption error [%s]: %s", resolved_node, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to inject disruption: {exc}")
 
 
 # ---------------------------------------------------------------------------

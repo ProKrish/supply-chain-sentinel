@@ -152,7 +152,7 @@ function normalizeDoneEvent(event) {
     }
 }
 
-export default function AgentStreamPanel({ shipmentId }) {
+export default function AgentStreamPanel({ shipmentId, analyzeButtonAriaLabel }) {
     const { getAccessTokenSilently } = useAuth0()
     const [events, setEvents] = useState([])
     const [result, setResult] = useState(null)
@@ -231,6 +231,7 @@ export default function AgentStreamPanel({ shipmentId }) {
             <button
                 onClick={runStream}
                 disabled={loading}
+                aria-label={analyzeButtonAriaLabel}
                 className="w-full py-3 px-6 rounded-lg font-semibold text-sm tracking-wide transition-all duration-200"
                 style={{
                     backgroundColor: loading ? '#0e7490' : '#06b6d4',
