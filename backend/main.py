@@ -27,6 +27,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import psycopg2
+import psycopg2.extras
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
@@ -184,17 +186,18 @@ def health_check(request: Request):
     Returns 503 if Supabase is unreachable.
     """
     # Database ping
-    db_status      = "healthy"
+    db_status = "healthy"
     shipment_count = 0
+    conn = None
     try:
         conn = get_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM shipments")
             shipment_count = cur.fetchone()[0]
-        conn.close()
     except Exception as exc:
         logger.error("Health check DB error: %s", exc)
         db_status = f"unhealthy - {exc}"
+    # DO NOT close the shared connection here; cursors are closed by context managers
 
     # Graph ping
     graph        = get_graph()
@@ -224,64 +227,28 @@ def health_check(request: Request):
 # ---------------------------------------------------------------------------
 # ENDPOINT 3: GET /shipments
 # ---------------------------------------------------------------------------
-@app.get("/shipments", tags=["Shipments"])
+@app.get("/shipments")
 @limiter.limit("30/minute")
-def list_shipments(
+async def get_shipments(
     request: Request,
-    limit:    int   = Query(default=50,  ge=1, le=500, description="Max rows to return."),
-    offset:   int   = Query(default=0,   ge=0,          description="Pagination offset."),
-    status:   str   = Query(default=None,               description="Filter by status."),
-    min_risk: float = Query(default=None, ge=0.0, le=1.0, description="Minimum risk_score filter."),
-    current_user: dict = Depends(require_analyst),
+    limit: int = 500,
+    current_user: dict = Depends(require_analyst)
 ):
-    """
-    List active shipments with optional filters and pagination.
-    Ordered by risk_score DESC.
-    """
-    conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            conditions = []
-            params     = []
-
-            if status is not None:
-                conditions.append("status = %s")
-                params.append(status)
-            if min_risk is not None:
-                conditions.append("risk_score >= %s")
-                params.append(min_risk)
-
-            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-            cur.execute(f"""
-                SELECT
-                    shipment_id, origin, destination, current_node,
-                    cargo_type, priority_tier, sla_deadline,
-                    estimated_arrival, carrier_id, status, risk_score
-                FROM shipments
-                {where_clause}
-                ORDER BY risk_score DESC
-                LIMIT %s OFFSET %s
-            """, (*params, limit, offset))
-
-            rows    = cur.fetchall()
-            columns = [
-                "shipment_id", "origin", "destination", "current_node",
-                "cargo_type", "priority_tier", "sla_deadline",
-                "estimated_arrival", "carrier_id", "status", "risk_score",
-            ]
-            shipments = [dict(zip(columns, row)) for row in rows]
-
-            cur.execute(f"SELECT COUNT(*) FROM shipments {where_clause}", params)
-            total = cur.fetchone()[0]
-
-        return {"total": total, "limit": limit, "offset": offset, "shipments": shipments}
-
-    except Exception as exc:
-        logger.error("list_shipments error: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            cur.execute(
+                "SELECT shipment_id, origin, destination, current_node, cargo_type, priority_tier, sla_deadline, estimated_arrival, carrier_id, status, risk_score FROM shipments ORDER BY risk_score DESC LIMIT %s",
+                (limit,)
+            )
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            cur.close()
+    except Exception as e:
+        print(f"SHIPMENTS ERROR: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +364,7 @@ def get_shipment(shipment_id: str, request: Request, current_user: dict = Depend
     except Exception as exc:
         logger.error("get_shipment error [%s]: %s", shipment_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
+    # DO NOT close the shared connection; cursor was closed by the context manager above
 
 
 # ---------------------------------------------------------------------------
@@ -444,21 +410,25 @@ def inject_disruption(body: DisruptionInjectRequest, request: Request, current_u
     Triggers cascade impact calculation and updates downstream shipment risks.
     Returns 400 if node_id is not in the route graph.
     """
-    graph = get_graph()
-    if body.node_id not in graph:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Node '{body.node_id}' not found in route graph. "
-                f"Sample nodes: {sorted(list(graph.nodes()))[:10]}"
-            ),
-        )
-
     try:
-        return simulator.inject(body.node_id, body.severity, body.disruption_type)
-    except Exception as exc:
-        logger.error("inject_disruption error: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        graph = get_graph()
+        if body.node_id not in graph:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Node '{body.node_id}' not found in route graph. "
+                    f"Sample nodes: {sorted(list(graph.nodes()))[:10]}"
+                ),
+            )
+
+        try:
+            return simulator.inject(body.node_id, body.severity, body.disruption_type)
+        except Exception as exc:
+            logger.error("inject_disruption error: %s", exc)
+            raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as e:
+        print(f"INJECT ERROR: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +485,6 @@ def get_disruption_history(
     except Exception as exc:
         logger.error("get_disruption_history error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -581,8 +549,6 @@ def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
 
     logger.info("API: triggering agent reroute for shipment %s", body.shipment_id)
     try:
@@ -599,7 +565,7 @@ def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict
 # ENDPOINT 10.5: POST /agent/reroute/stream  [NEW -- Streaming]
 # ---------------------------------------------------------------------------
 @app.post("/agent/reroute/stream", tags=["Agent"])
-@limiter.limit("5/minute")
+@limiter.limit("20/minute")
 def stream_agent_reroute(body: RerouteRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
     Trigger the autonomous Groq-powered rerouting agent for a given shipment
@@ -624,8 +590,6 @@ def stream_agent_reroute(body: RerouteRequest, request: Request, current_user: d
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
 
     logger.info("API: triggering streaming agent reroute for shipment %s", body.shipment_id)
     return StreamingResponse(
@@ -704,8 +668,6 @@ def list_agent_decisions(
     except Exception as exc:
         logger.error("list_agent_decisions error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -763,8 +725,6 @@ def get_agent_decision(decision_id: str, request: Request, current_user: dict = 
     except Exception as exc:
         logger.error("get_agent_decision error [%s]: %s", decision_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------

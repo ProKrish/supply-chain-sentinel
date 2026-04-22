@@ -819,7 +819,54 @@ class ReroutingAgent:
 
         This method patches the args in-place using previously cached tool results.
         """
-        if tool_name == "score_reroute_tradeoffs":
+        if tool_name == "find_alternative_paths":
+            cached_shipment = (
+                tool_results_cache.get("get_shipment_details", {}).get("shipment", {})
+            )
+            graph = get_graph()
+
+            def _is_bad_node_arg(value: Any) -> bool:
+                if not isinstance(value, str):
+                    return True
+                cleaned = value.strip()
+                if not cleaned:
+                    return True
+                lowered = cleaned.lower()
+                if (
+                    "from_get_shipment_details" in lowered
+                    or "from_previous" in lowered
+                    or "current_node_" in lowered
+                    or "destination_" in lowered
+                ):
+                    return True
+                return cleaned not in graph
+
+            if _is_bad_node_arg(tool_input.get("origin")):
+                fallback_origin = cached_shipment.get("current_node") or cached_shipment.get("origin")
+                if fallback_origin:
+                    logger.warning(
+                        "Auto-fixing find_alternative_paths.origin -> %s",
+                        fallback_origin,
+                    )
+                    tool_input["origin"] = fallback_origin
+
+            if _is_bad_node_arg(tool_input.get("destination")):
+                fallback_destination = cached_shipment.get("destination")
+                if fallback_destination:
+                    logger.warning(
+                        "Auto-fixing find_alternative_paths.destination -> %s",
+                        fallback_destination,
+                    )
+                    tool_input["destination"] = fallback_destination
+
+            k_value = tool_input.get("k")
+            if k_value is not None and not isinstance(k_value, int):
+                try:
+                    tool_input["k"] = int(k_value)
+                except (TypeError, ValueError):
+                    tool_input["k"] = K_SHORTEST_PATHS
+
+        elif tool_name == "score_reroute_tradeoffs":
             # Fix 'candidates' -- must be a list of path dicts
             if not isinstance(tool_input.get("candidates"), list):
                 logger.warning(
@@ -1065,8 +1112,10 @@ class ReroutingAgent:
         decision_committed                  = False
         final_summary                       = ""
         committed_route                     = None
+        turns_taken                         = 0
 
         for turn in range(MAX_AGENT_TURNS):
+            turns_taken = turn + 1
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -1178,8 +1227,12 @@ class ReroutingAgent:
         # Yield done event
         yield sse({
             "type": "done",
+            "turns": turns_taken,
+            "tool_calls": tool_calls_log,
+            "final_recommendation": final_summary,
             "summary": {
                 "shipment_id": shipment_id,
+                "turns_taken": turns_taken,
                 "tools_called": tool_calls_log,
                 "reroute_committed": decision_committed,
                 "committed_route": committed_route,

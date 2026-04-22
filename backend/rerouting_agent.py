@@ -35,16 +35,34 @@ def _groq_tools():
         })
     return tools
 
+
+
 AGENT_SYSTEM_PROMPT = """You are an AI rerouting agent for a supply chain disruption detection system.
 
-Your job:
-1. Call get_shipment_details to understand the shipment
-2. Call get_alternative_routes to find possible paths
-3. Call score_route on at least 2 candidate routes
-4. Pick the best route based on risk, time, cost
-5. Call commit_reroute with your decision and rationale
+STRICT EXECUTION ORDER:
+1. Call get_shipment_details(shipment_id)
+2. READ the tool result. Extract the "origin" field value (NOT current_node).
+3. Call get_alternative_routes(origin_node=<EXACT origin VALUE>)
+    Example: result has "origin": "Mumbai" → call get_alternative_routes(origin_node="Mumbai")
+4. Call score_route on at least 2 routes returned from step 3
+5. Call commit_reroute with final decision and rationale
 
-Always complete all 5 steps. Be decisive. Return structured analysis."""
+RISK SCORE INTERPRETATION:
+- If risk_score > 0.5, the shipment is HIGH RISK and rerouting must be seriously considered.
+- If risk_score > 0.8, rerouting is STRONGLY RECOMMENDED unless no better path exists.
+- Never recommend No Change for a shipment with risk_score above 0.6 without explicit justification.
+
+MANDATORY RULES:
+- If shipment risk_score >= 0.6, you MUST recommend rerouting
+- You MUST call score_route on at least 2 different routes
+- You MUST call commit_reroute with the best scoring route
+- Never say 'no change needed' for high risk shipments
+- Always compare at least 2 alternatives before deciding
+
+RULES:
+- Always use "origin" field from get_shipment_details, never "current_node"
+- Never pass placeholder names — only real values like "Mumbai", "Dubai", "Singapore"
+- Complete all 5 steps before stopping"""
 
 
 def run_agent(shipment_id: str) -> Dict[str, Any]:

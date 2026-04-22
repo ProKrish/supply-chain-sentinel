@@ -34,4 +34,25 @@ export const injectDisruption = (data) => client.post('/disruptions/inject', dat
 export const autoDisruption = () => client.post('/disruptions/auto').then(r => r.data);
 export const rerouteAgent = (id) => client.post('/agent/reroute', { shipment_id: id }).then(r => r.data);
 
+export const rerouteAgentStream = async (shipmentId, getToken) => {
+  const token = await getToken({
+    authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE }
+  })
+
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL}/agent/reroute/stream`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ shipment_id: shipmentId })
+    }
+  )
+
+  if (!response.ok) throw new Error(`Stream failed: ${response.status}`)
+  return response.body.getReader()
+}
+
 export default client;

@@ -3,13 +3,15 @@ import { useAuth0 } from '@auth0/auth0-react';
 import ShipmentMap from '../components/Map/ShipmentMap';
 import MapLegend from '../components/Map/MapLegend';
 import AppHeader from '../components/Layout/AppHeader';
-import { 
-  getShipments, 
-  getDisruptionHistory, 
-  getActiveDisruptions, 
-  injectDisruption, 
-  rerouteAgent 
+import AgentStreamPanel from '../components/Agent/AgentStreamPanel'
+import {
+  getShipments,
+  getDisruptionHistory,
+  getActiveDisruptions,
+  injectDisruption,
+  rerouteAgent
 } from '../api/client';
+
 
 const PORT_NODE_LIST = [
   "Shanghai", "Rotterdam", "Los Angeles", "Mumbai",
@@ -24,14 +26,6 @@ const DISRUPTION_TYPES = [
   "Equipment Failure", "Flooding", "Political Unrest",
   "Fog Closure", "Cyber Attack"
 ];
-
-function timeAgoText(dateString) {
-  if (!dateString) return '';
-  const seconds = Math.floor((new Date() - new Date(dateString)) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} mins ago`;
-  return `${Math.floor(seconds / 3600)} hrs ago`;
-}
 
 function getSeverityColor(severity) {
   if (severity > 0.7) return 'bg-[#ef4444]'; // red
@@ -57,15 +51,38 @@ function getAvgRiskColorClass(score) {
   return 'text-[#ef4444]';
 }
 
+function hasShipmentChanged(prev, next) {
+  if (!prev || !next) return prev !== next;
+  return (
+    prev.status !== next.status ||
+    prev.risk_score !== next.risk_score ||
+    prev.current_node !== next.current_node ||
+    prev.estimated_arrival !== next.estimated_arrival
+  );
+}
+
 export default function Dashboard() {
-  const { user } = useAuth0();
-  const roles = user?.["https://supply-chain-sentinel/roles"] || [];
-  const isManager = roles.includes("logistics_manager");
+  const getTimeAgo = (timestamp) => {
+    if (!timestamp) return 'recently'
+    const cleaned = typeof timestamp === 'string'
+      ? timestamp.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
+      : timestamp
+    const date = new Date(cleaned)
+    if (isNaN(date.getTime())) return 'recently'
+    const diff = Date.now() - date.getTime()
+    const hrs = Math.floor(diff / 3600000)
+    const mins = Math.floor(diff / 60000)
+    if (hrs > 24) return `${Math.floor(hrs / 24)}d ago`
+    if (hrs > 0) return `${hrs}hrs ago`
+    if (mins > 0) return `${mins}mins ago`
+    return 'just now'
+  }
+  const { user } = useAuth0()
+  const roles = user?.['https://supply-chain-sentinel/roles'] || []
+  const isManager = roles.includes('logistics_manager')
 
   const [selectedShipment, setSelectedShipment] = useState(null);
-  const [agentResult, setAgentResult] = useState(null);
-  const [agentLoading, setAgentLoading] = useState(false);
-  
+
   const [showDisruptionModal, setShowDisruptionModal] = useState(false);
   const [modalNode, setModalNode] = useState('Singapore');
   const [modalSeverity, setModalSeverity] = useState(0.7);
@@ -82,7 +99,7 @@ export default function Dashboard() {
       const res = await getShipments({ limit: 500 });
       const shipments = res?.shipments || res || [];
       setAllShipments(shipments);
-      
+
       let total = 0, highRisk = 0, sumRisk = 0;
       shipments.forEach(s => {
         if (s.status === 'in_transit') total++;
@@ -90,26 +107,32 @@ export default function Dashboard() {
         sumRisk += (s.risk_score || 0);
       });
       const avgRisk = shipments.length > 0 ? sumRisk / shipments.length : 0;
-      
+
       setStats(prev => ({ ...prev, total, highRisk, avgRisk }));
-      
-      if (selectedShipment) {
-        const updated = shipments.find(s => s.shipment_id === selectedShipment.shipment_id);
-        if (updated) setSelectedShipment(updated);
-      }
-    } catch(e) {
+
+      setSelectedShipment((previous) => {
+        if (!previous) return previous;
+        const updated = shipments.find((s) => s.shipment_id === previous.shipment_id);
+        if (!updated) return null;
+        return hasShipmentChanged(previous, updated) ? updated : previous;
+      });
+    } catch (e) {
       console.error("Failed loading shipments", e);
     }
-  }, [selectedShipment]);
+  }, []);
 
   const loadDisruptions = useCallback(async () => {
     try {
       const hist = await getDisruptionHistory();
-      setDisruptionHistory(hist?.slice(0, 10) || []);
-      const active = await getActiveDisruptions();
-      setActiveDisruptions(active || []);
-      setStats(prev => ({ ...prev, active: (active || []).length }));
-    } catch(e) {
+      const histArray = Array.isArray(hist) ? hist : hist?.disruptions || hist?.history || hist?.events || [];
+      setDisruptionHistory(histArray.slice(0, 10));
+      const activeRes = await getActiveDisruptions();
+      const activeArray = Array.isArray(activeRes)
+        ? activeRes
+        : activeRes?.disruptions || [];
+      setActiveDisruptions(activeArray);
+      setStats(prev => ({ ...prev, active: activeArray.length }));
+    } catch (e) {
       console.error("Failed loading disruptions", e);
     }
   }, []);
@@ -118,9 +141,9 @@ export default function Dashboard() {
     loadShipments();
     loadDisruptions();
     const interval = setInterval(() => {
-        loadShipments();
-        loadDisruptions();
-    }, 15000);
+      loadShipments();
+      loadDisruptions();
+    }, 60000);
     return () => clearInterval(interval);
   }, [loadShipments, loadDisruptions]);
 
@@ -133,37 +156,24 @@ export default function Dashboard() {
       });
       setShowDisruptionModal(false);
       loadDisruptions();
-    } catch(e) {
+    } catch (e) {
       console.error("Inject failed", e);
       alert("Failed to inject disruption: " + e.message);
     }
   };
 
-  const handleAgentAnalysis = async () => {
-    if (!selectedShipment) return;
-    setAgentLoading(true);
-    setAgentResult(null);
-    try {
-      const res = await rerouteAgent(selectedShipment.shipment_id);
-      setAgentResult(res?.final_recommendation || res?.agent_reasoning?.[0] || JSON.stringify(res));
-    } catch(e) {
-      setAgentResult(`Error: ${e.message}`);
-    } finally {
-      setAgentLoading(false);
-    }
-  };
+
 
   return (
     <div className="h-screen w-full bg-[#0f172a] flex flex-col font-sans overflow-hidden">
       <AppHeader />
-      
+
       <div className="flex flex-row pt-16 h-full w-full">
         {/* LEFT COLUMN: Map Area */}
         <div className="w-[65%] h-full relative border-r border-[#334155]">
-          <ShipmentMap 
+          <ShipmentMap
             onShipmentClick={(s) => {
               setSelectedShipment(s);
-              setAgentResult(null);
             }}
             selectedShipmentId={selectedShipment?.shipment_id}
           />
@@ -172,7 +182,7 @@ export default function Dashboard() {
 
         {/* RIGHT COLUMN: Info Panel */}
         <div className="w-[35%] h-full bg-[#0f172a] p-4 overflow-y-auto relative z-10 shadow-[-10px_0_20px_-5px_rgba(0,0,0,0.3)]">
-          
+
           {/* SECTION 1: STATS GRID */}
           <div className="grid grid-cols-2 gap-3 mb-4">
             <div className="bg-[#1e293b] rounded-lg p-3 hover:bg-[#263548] transition duration-200">
@@ -205,12 +215,12 @@ export default function Dashboard() {
                 </svg>
               </button>
             </div>
-            
+
             <div className="space-y-2 mb-3">
-              {disruptionHistory.length === 0 && (
+              {(disruptionHistory || []).length === 0 && (
                 <p className="text-slate-500 text-xs italic">No active disruptions recorded.</p>
               )}
-              {disruptionHistory.map((d, idx) => (
+              {(disruptionHistory || []).map((d, idx) => (
                 <div key={idx} className={`bg-[#1e293b] rounded p-2 flex items-center justify-between border-l-4 border-transparent ${getHoverBorderColor(d.severity || 0)} cursor-pointer transition-all duration-200`}>
                   <div className="flex items-center gap-3">
                     <div className={`w-[10px] h-[10px] rounded-full ${getSeverityColor(d.severity || 0)}`} />
@@ -219,13 +229,13 @@ export default function Dashboard() {
                       <span className="text-slate-400 text-xs">{d.affected_node || "Unknown Node"}</span>
                     </div>
                   </div>
-                  <span className="text-xs text-slate-400">{timeAgoText(d.timestamp || d.created_at)}</span>
+                  <span className="text-xs text-slate-400">{getTimeAgo(d.timestamp || d.created_at || d.detected_at || d.resolved_at)}</span>
                 </div>
               ))}
             </div>
 
             {isManager && (
-              <button 
+              <button
                 onClick={() => setShowDisruptionModal(true)}
                 className="w-full py-2 border border-[#06b6d4] text-[#06b6d4] hover:bg-[#06b6d4] hover:text-white hover:brightness-110 rounded text-sm transition-all font-medium"
               >
@@ -237,13 +247,13 @@ export default function Dashboard() {
           {/* SECTION 3: SHIPMENT DETAIL PANEL */}
           <div>
             <h3 className="text-white text-sm font-semibold mb-3 border-b border-[#334155] pb-2">Shipment Detail</h3>
-            
+
             {!selectedShipment && (
               <div className="flex flex-col items-center justify-center py-10 opacity-60">
                 <svg className="w-16 h-16 text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/-2000/svg">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
                 </svg>
-                <p className="text-slate-400 text-sm text-center">Click a shipment on the map <br/>to view details and run AI analysis</p>
+                <p className="text-slate-400 text-sm text-center">Click a shipment on the map <br />to view details and run AI analysis</p>
               </div>
             )}
 
@@ -336,125 +346,9 @@ export default function Dashboard() {
                 </div>
 
                 {isManager && (
-                  <button 
-                    onClick={handleAgentAnalysis}
-                    disabled={agentLoading}
-                    className={`w-full py-2.5 rounded font-medium transition-all ${
-                      agentLoading 
-                        ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                        : 'bg-[#06b6d4] hover:bg-[#06b6d4] hover:brightness-110 text-white shadow-lg shadow-cyan-500/20'
-                    }`}
-                  >
-                    {agentLoading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin" />
-                        Agent analyzing...
-                      </span>
-                    ) : (
-                      "Analyze with AI"
-                    )}
-                  </button>
-                )}
-
-                {agentResult && (
-                  <div className="mt-4 bg-[#0f172a] border border-[#334155] rounded-lg overflow-hidden text-sm">
-                    
-                    {/* Header */}
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-[#334155] bg-[#1e293b]">
-                      <span className="bg-green-500 rounded-full w-4 h-4 flex items-center justify-center text-[10px]">✓</span>
-                      <p className="text-white font-semibold">AI Recommendation</p>
-                    </div>
-
-                    {(() => {
-                      try {
-                        const parsed = typeof agentResult === 'string' ? JSON.parse(agentResult) : agentResult
-                        const summary = parsed.summary || ''
-
-                        // Parse fields from summary string
-                        const get = (label) => {
-                          const match = summary.match(new RegExp(`\\*\\*${label}\\*\\*:\\s*([^\\n]+)`))
-                          return match ? match[1].trim() : null
-                        }
-
-                        const decision   = get('Decision')
-                        const path       = get('Chosen Path')
-                        const riskDelta  = get('Risk Delta')
-                        const timeImpact = get('Time Impact')
-                        const costImpact = get('Cost Impact')
-                        const rationale  = get('Rationale')
-
-                        return (
-                          <div className="p-3 space-y-3">
-
-                            {/* Decision badge */}
-                            {decision && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-400 text-xs">Decision:</span>
-                                <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
-                                  decision.toLowerCase().includes('reroute') 
-                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                    : 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                }`}>
-                                  {decision}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Chosen path */}
-                            {path && (
-                              <div className="bg-[#1e293b] rounded px-3 py-2 border border-[#334155]">
-                                <p className="text-slate-400 text-xs mb-1">Chosen Path</p>
-                                <p className="text-[#06b6d4] font-mono text-xs">{path}</p>
-                              </div>
-                            )}
-
-                            {/* Stat chips */}
-                            <div className="grid grid-cols-3 gap-2">
-                              {[
-                                { label: 'Risk \u0394',  value: riskDelta  },
-                                { label: 'Time',    value: timeImpact },
-                                { label: 'Cost',    value: costImpact },
-                              ].map(({ label, value }) => value && (
-                                <div key={label} className="bg-[#1e293b] rounded p-2 border border-[#334155] text-center">
-                                  <p className="text-slate-400 text-[10px]">{label}</p>
-                                  <p className="text-white text-xs font-semibold mt-0.5">{value}</p>
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Rationale */}
-                            {rationale && (
-                              <div>
-                                <p className="text-slate-400 text-[10px] uppercase tracking-widest mb-1">Rationale</p>
-                                <p className="text-slate-300 text-xs leading-relaxed">{rationale}</p>
-                              </div>
-                            )}
-
-                            {/* Footer */}
-                            <div className="flex items-center gap-3 pt-1 border-t border-[#334155]">
-                              <span className="text-slate-500 text-[10px]">
-                                {parsed.turns_taken} turns
-                              </span>
-                              <span className="text-slate-500 text-[10px]">
-                                {parsed.tool_calls?.length || 0} tools called
-                              </span>
-                              <span className="text-slate-500 text-[10px]">
-                                {parsed.tool_calls?.join(' \u2192 ')}
-                              </span>
-                            </div>
-
-                          </div>
-                        )
-                      } catch (e) {
-                        // fallback \u2014 raw text if JSON parse fails
-                        return (
-                          <p className="p-3 text-slate-300 text-xs whitespace-pre-wrap leading-relaxed">
-                            {agentResult}
-                          </p>
-                        )
-                      }
-                    })()}
-                  </div>
+                  <AgentStreamPanel
+                    shipmentId={selectedShipment.id || selectedShipment.shipment_id}
+                  />
                 )}
 
               </div>
@@ -468,10 +362,10 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-[1000] bg-black/70 flex items-center justify-center">
           <div className="bg-[#1e293b] rounded-xl p-6 w-96 shadow-2xl border border-[#334155]">
             <h2 className="text-white text-lg font-bold mb-4">Inject Disruption</h2>
-            
+
             <div className="mb-4">
               <label className="block text-slate-400 text-xs mb-1">Affected Node</label>
-              <select 
+              <select
                 value={modalNode}
                 onChange={(e) => setModalNode(e.target.value)}
                 className="w-full bg-[#0f172a] border border-[#334155] rounded text-white text-sm p-2 outline-none focus:border-[#06b6d4] transition-colors"
@@ -486,7 +380,7 @@ export default function Dashboard() {
               <label className="block text-slate-400 text-xs mb-1">
                 Severity: {parseFloat(modalSeverity).toFixed(1)}
               </label>
-              <input 
+              <input
                 type="range"
                 min="0.1" max="1.0" step="0.1"
                 value={modalSeverity}
@@ -497,7 +391,7 @@ export default function Dashboard() {
 
             <div className="mb-6">
               <label className="block text-slate-400 text-xs mb-1">Disruption Type</label>
-              <select 
+              <select
                 value={modalType}
                 onChange={(e) => setModalType(e.target.value)}
                 className="w-full bg-[#0f172a] border border-[#334155] rounded text-white text-sm p-2 outline-none focus:border-[#06b6d4] transition-colors"
@@ -509,13 +403,13 @@ export default function Dashboard() {
             </div>
 
             <div className="flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => setShowDisruptionModal(false)}
                 className="px-4 py-2 rounded text-slate-300 border border-[#334155] hover:bg-slate-700 hover:text-white text-sm transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleInjectDisruption}
                 className="px-4 py-2 rounded bg-[#06b6d4] text-white hover:brightness-110 text-sm transition-all"
               >

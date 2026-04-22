@@ -4,6 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import Callback from './pages/Callback';
+import Analytics from './pages/Analytics';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth0();
@@ -40,6 +41,14 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/analytics"
+        element={
+          <ProtectedRoute>
+            <Analytics />
+          </ProtectedRoute>
+        }
       />
       <Route path="/callback" element={<Callback />} />
       <Route path="*" element={<Navigate to="/" replace />} />
