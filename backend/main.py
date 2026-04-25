@@ -118,9 +118,17 @@ app.add_exception_handler(
     RateLimitExceeded, _rate_limit_exceeded_handler
 )
 
+import os
+
+origins = [
+    "http://localhost:5173",
+    os.getenv("ALLOWED_ORIGINS", ""),
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # Tighten this in production
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
