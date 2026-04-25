@@ -528,7 +528,7 @@ def auto_inject_disruption(request: Request, current_user: dict = Depends(requir
 @limiter.limit("5/minute")
 def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
-    Trigger the autonomous Groq-powered rerouting agent for a given shipment.
+    Trigger the autonomous Gemini-powered rerouting agent for a given shipment.
 
     The agent executes a full ReAct loop:
       1. Fetches shipment details and active disruptions.
@@ -541,7 +541,7 @@ def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict
 
     Returns 404 if the shipment does not exist.
 
-    Note: This endpoint may take 10-30 seconds. The Groq API is called
+    Note: This endpoint may take 10-30 seconds. The Gemini API is called
     synchronously within the ReAct loop.
     """
     # Fast pre-check: verify shipment exists before spending API calls
@@ -580,7 +580,7 @@ def run_agent_reroute(body: RerouteRequest, request: Request, current_user: dict
 @limiter.limit("20/minute")
 def stream_agent_reroute(body: RerouteRequest, request: Request, current_user: dict = Depends(require_manager)):
     """
-    Trigger the autonomous Groq-powered rerouting agent for a given shipment
+    Trigger the autonomous Gemini-powered rerouting agent for a given shipment
     and return a Server-Sent Events (SSE) stream of its progress.
 
     Yields events: `text`, `tool_call`, `tool_result`, `done`, `error`.

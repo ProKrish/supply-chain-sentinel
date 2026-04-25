@@ -469,62 +469,151 @@ export default function Dashboard() {
 
           {/* SECTION 3: SHIPMENT DETAIL PANEL */}
           <div>
-            <h3 className="text-white text-sm font-semibold mb-3 border-b border-[#334155] pb-2">Shipment Detail</h3>
+            <h3 className="text-white text-sm font-semibold mb-3 border-b border-[#334155] pb-2 flex items-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="3" width="22" height="18" rx="3" />
+                <line x1="1" y1="9" x2="23" y2="9" />
+                <path d="M7 3v6M17 3v6" />
+              </svg>
+              Shipment Detail
+            </h3>
 
             {!selectedShipment && (
-              <div className="flex flex-col items-center justify-center py-10 opacity-60">
-                <svg className="w-16 h-16 text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/-2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
-                </svg>
-                <p className="text-slate-300 text-sm text-center">Click a shipment on the map <br />to view details and run AI analysis</p>
+              <div className="flex flex-col items-center justify-center py-12 opacity-60">
+                <div className="w-20 h-20 mb-4 rounded-full bg-[#1e293b] border border-[#334155] flex items-center justify-center">
+                  <svg className="w-10 h-10 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                </div>
+                <p className="text-slate-400 text-sm text-center font-medium">Select a Shipment</p>
+                <p className="text-slate-500 text-xs text-center mt-1">Click a marker on the map to view<br/>details and run AI analysis</p>
               </div>
             )}
 
             {selectedShipment && (
-              <div className="flex flex-col bg-[#1e293b] rounded-lg p-4 animate-slide-in">
+              <div className="flex flex-col bg-gradient-to-b from-[#1e293b] to-[#172032] rounded-xl p-4 animate-slide-in border border-[#334155]/50 shadow-lg">
+                {/* Header with ID + Status badge */}
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-[#06b6d4] font-mono font-bold text-lg">
-                    {selectedShipment.id || selectedShipment.shipment_id}
-                  </span>
-                  <span className={`text-xs px-2 py-1 rounded text-white font-medium uppercase tracking-wide
-                    ${selectedShipment.status === 'in_transit' ? 'bg-blue-500/80' :
-                      selectedShipment.status === 'delayed' ? 'bg-red-500/80' : 'bg-green-500/80'}`}>
-                    {selectedShipment.status}
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2.5">
+                        <rect x="2" y="7" width="20" height="14" rx="2" />
+                        <path d="M16 7V5a4 4 0 00-8 0v2" />
+                      </svg>
+                    </div>
+                    <span className="text-[#06b6d4] font-mono font-bold text-lg">
+                      {selectedShipment.id || selectedShipment.shipment_id}
+                    </span>
+                  </div>
+                  <span className={`text-[10px] px-2.5 py-1 rounded-full text-white font-semibold uppercase tracking-wider
+                    ${selectedShipment.status === 'in_transit' ? 'bg-blue-500/80 shadow-blue-500/20 shadow-md' :
+                      selectedShipment.status === 'delayed' ? 'bg-red-500/80 shadow-red-500/20 shadow-md' : 'bg-green-500/80 shadow-green-500/20 shadow-md'}`}>
+                    {selectedShipment.status?.replace('_', ' ')}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-center gap-3 mb-4 bg-[#0f172a] rounded py-2 border border-[#334155]">
-                  <span className="text-white text-sm">{selectedShipment.origin}</span>
-                  <span className="text-slate-300 text-lg">&rarr;</span>
-                  <span className="text-white text-sm">{selectedShipment.destination}</span>
+                {/* Route Flow Visualization */}
+                <div className="mb-4 bg-[#0f172a] rounded-xl p-4 border border-[#334155]">
+                  <div className="flex items-center justify-between">
+                    <div className="text-center flex-1">
+                      <div className="w-10 h-10 mx-auto mb-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2">
+                          <circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 10-16 0c0 3 2.7 7 8 11.7z"/>
+                        </svg>
+                      </div>
+                      <p className="text-white text-sm font-semibold">{selectedShipment.origin}</p>
+                      <p className="text-slate-500 text-[10px] uppercase">Origin</p>
+                    </div>
+                    <div className="flex-1 flex flex-col items-center px-2">
+                      <div className="w-full flex items-center gap-0.5 mb-1">
+                        <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-lg shadow-cyan-400/40" />
+                        <div className="flex-1 h-0.5 bg-gradient-to-r from-cyan-400 via-purple-400 to-amber-400 rounded relative overflow-hidden">
+                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-shimmer" style={{animation:'shimmer 2s infinite'}} />
+                        </div>
+                        <div className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-lg shadow-amber-400/40" />
+                      </div>
+                      <span className="text-[9px] text-slate-500 uppercase tracking-wider">{selectedShipment.cargo_type || 'In Transit'}</span>
+                    </div>
+                    <div className="text-center flex-1">
+                      <div className="w-10 h-10 mx-auto mb-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
+                          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                        </svg>
+                      </div>
+                      <p className="text-white text-sm font-semibold">{selectedShipment.destination}</p>
+                      <p className="text-slate-500 text-[10px] uppercase">Destination</p>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <p className="text-slate-300 text-xs">Cargo Type</p>
-                    <p className="text-white text-sm">{selectedShipment.cargo_type || 'N/A'}</p>
+                {/* Info Grid with Icons */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-[#0f172a] rounded-lg p-3 border border-[#334155] flex items-start gap-2.5">
+                    <div className="w-7 h-7 rounded-md bg-purple-500/10 border border-purple-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a4 4 0 00-8 0v2"/></svg>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">Cargo</p>
+                      <p className="text-white text-sm font-medium">{selectedShipment.cargo_type || 'N/A'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-300 text-xs">Priority Tier</p>
-                    <p className="text-white text-sm">Tier {selectedShipment.priority_tier || 'N/A'}</p>
+                  <div className="bg-[#0f172a] rounded-lg p-3 border border-[#334155] flex items-start gap-2.5">
+                    <div className="w-7 h-7 rounded-md bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">Priority</p>
+                      <p className="text-white text-sm font-medium">Tier {selectedShipment.priority_tier || 'N/A'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-300 text-xs">Carrier</p>
-                    <p className="text-white text-sm">{selectedShipment.carrier || 'N/A'}</p>
+                  <div className="bg-[#0f172a] rounded-lg p-3 border border-[#334155] flex items-start gap-2.5">
+                    <div className="w-7 h-7 rounded-md bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">Carrier</p>
+                      <p className="text-white text-sm font-medium">{selectedShipment.carrier || 'N/A'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-300 text-xs">SLA Deadline</p>
-                    {(() => {
-                      const raw = selectedShipment.sla_deadline?.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
-                      const date = new Date(raw)
-                      const days = Math.ceil((date - new Date()) / (1000 * 60 * 60 * 24))
-                      const valid = !isNaN(date.getTime())
-                      return (
-                        <p className="text-sm font-medium" style={{ color: valid && days < 3 ? '#ef4444' : '#ffffff' }}>
-                          {valid ? date.toLocaleDateString() : 'N/A'}
-                        </p>
-                      )
-                    })()}
+                  <div className="bg-[#0f172a] rounded-lg p-3 border border-[#334155] flex items-start gap-2.5">
+                    <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5"
+                      style={{
+                        backgroundColor: (() => {
+                          const raw = selectedShipment.sla_deadline?.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
+                          const d = new Date(raw); const days = Math.ceil((d - new Date()) / 86400000)
+                          return !isNaN(d.getTime()) && days < 3 ? 'rgba(239,68,68,0.1)' : 'rgba(249,115,22,0.1)'
+                        })(),
+                        borderWidth: 1, borderStyle: 'solid',
+                        borderColor: (() => {
+                          const raw = selectedShipment.sla_deadline?.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
+                          const d = new Date(raw); const days = Math.ceil((d - new Date()) / 86400000)
+                          return !isNaN(d.getTime()) && days < 3 ? 'rgba(239,68,68,0.2)' : 'rgba(249,115,22,0.2)'
+                        })()
+                      }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round"
+                        stroke={(() => {
+                          const raw = selectedShipment.sla_deadline?.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
+                          const d = new Date(raw); const days = Math.ceil((d - new Date()) / 86400000)
+                          return !isNaN(d.getTime()) && days < 3 ? '#ef4444' : '#f97316'
+                        })()}>
+                        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">SLA Deadline</p>
+                      {(() => {
+                        const raw = selectedShipment.sla_deadline?.replace('+00:00Z', 'Z').replace('+00:00', 'Z')
+                        const date = new Date(raw)
+                        const days = Math.ceil((date - new Date()) / 86400000)
+                        const valid = !isNaN(date.getTime())
+                        return (
+                          <p className="text-sm font-medium" style={{ color: valid && days < 3 ? '#ef4444' : '#ffffff' }}>
+                            {valid ? date.toLocaleDateString() : 'N/A'}
+                            {valid && days >= 0 && <span className="text-[10px] text-slate-500 ml-1">({days}d left)</span>}
+                          </p>
+                        )
+                      })()}
+                    </div>
                   </div>
                 </div>
 
@@ -535,36 +624,48 @@ export default function Dashboard() {
                   const days = Math.ceil((date - new Date()) / (1000 * 60 * 60 * 24))
                   if (!isNaN(date.getTime()) && days < 3 && selectedShipment.status !== 'delivered') {
                     return (
-                      <div className="bg-red-500/20 text-red-400 p-2 rounded text-sm mb-4 border border-red-500/30 font-medium">
-                        {'\u26A0\uFE0F'} SLA breach risk: {Math.max(0, days)} days remaining
+                      <div className="bg-red-500/10 text-red-400 p-3 rounded-lg text-sm mb-4 border border-red-500/20 font-medium flex items-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        SLA breach risk — only <strong>{Math.max(0, days)}</strong> day{days !== 1 ? 's' : ''} remaining
                       </div>
                     )
                   }
                   return null
                 })()}
 
-                <div className="mb-4 text-center">
-                  <p className="text-3xl font-bold" style={{ color: getRiskColorHex(selectedShipment.risk_score) }}>
-                    {(selectedShipment.risk_score * 100).toFixed(1)}%
-                  </p>
-                  <p className="text-slate-300 text-xs uppercase tracking-widest mt-1 mb-2">Risk Score</p>
-                  <div className="w-full bg-[#0f172a] h-2 rounded-full overflow-hidden border border-[#334155]">
-                    <div className="h-full rounded-full"
-                      style={{
-                        width: `${selectedShipment.risk_score * 100}%`,
-                        backgroundColor: getRiskColorHex(selectedShipment.risk_score)
-                      }} />
+                {/* Circular Risk Gauge */}
+                <div className="mb-4 flex flex-col items-center">
+                  <div className="relative w-28 h-28 mb-2">
+                    <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                      <circle cx="60" cy="60" r="50" fill="none" stroke="#1e293b" strokeWidth="8" />
+                      <circle cx="60" cy="60" r="50" fill="none"
+                        stroke={getRiskColorHex(selectedShipment.risk_score)}
+                        strokeWidth="8" strokeLinecap="round"
+                        strokeDasharray={`${selectedShipment.risk_score * 314} 314`}
+                        style={{ transition: 'stroke-dasharray 1s ease-in-out', filter: `drop-shadow(0 0 6px ${getRiskColorHex(selectedShipment.risk_score)}66)` }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <p className="text-2xl font-bold" style={{ color: getRiskColorHex(selectedShipment.risk_score) }}>
+                        {(selectedShipment.risk_score * 100).toFixed(0)}%
+                      </p>
+                      <p className="text-[9px] text-slate-500 uppercase tracking-widest">Risk</p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Priority Tier bar replaces missing carrier_reliability */}
-                <div className="mb-6">
-                  <p className="text-slate-300 text-sm mb-1">
-                    Priority Level: Tier {selectedShipment.priority_tier || 'N/A'}
-                  </p>
-                  <div className="w-full bg-[#0f172a] h-1.5 rounded-full overflow-hidden border border-[#334155]">
-                    <div className="h-full rounded-full bg-[#06b6d4]"
-                      style={{ width: `${((4 - (selectedShipment.priority_tier || 4)) / 3) * 100}%` }} />
+                {/* Priority Level */}
+                <div className="mb-5 bg-[#0f172a] rounded-lg p-3 border border-[#334155]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-slate-400 text-xs flex items-center gap-1.5">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                      Priority Level
+                    </span>
+                    <span className="text-cyan-400 text-xs font-bold">Tier {selectedShipment.priority_tier || 'N/A'}</span>
+                  </div>
+                  <div className="w-full bg-[#1e293b] h-2 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-cyan-400"
+                      style={{ width: `${((4 - (selectedShipment.priority_tier || 4)) / 3) * 100}%`, transition: 'width 0.6s ease-in-out' }} />
                   </div>
                 </div>
 

@@ -30,15 +30,14 @@ export default function AppHeader() {
       
       {/* LEFT SIDE */}
       <div className="flex items-center gap-3">
-        {/* Custom Cyan Network SVG Icon */}
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <title>Supply Chain Sentinel Logo</title>
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-        </svg>
+        {/* Project Logo */}
+        <img 
+          src="/logo.jpg" 
+          alt="Supply Chain Sentinel Logo" 
+          width="36" 
+          height="36" 
+          style={{ borderRadius: '8px', objectFit: 'cover' }}
+        />
         <div className="flex flex-col">
           <span className="text-white font-semibold leading-tight">Supply Chain Sentinel</span>
           <span className="text-slate-300 text-xs leading-tight">Live Risk Monitor</span>
