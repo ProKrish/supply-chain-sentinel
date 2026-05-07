@@ -121,7 +121,11 @@ def _ensure_gemini_configured() -> None:
             "GEMINI_API_KEY is not set. Add it to backend/.env before running the rerouting agent."
         )
 
-    genai.configure(api_key=api_key)
+    genai.configure(
+        api_key=api_key,
+        transport="rest",
+        client_options={"api_endpoint": "generativelanguage.googleapis.com"},
+    )
     _gemini_configured = True
 
 
