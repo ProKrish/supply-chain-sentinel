@@ -1,24 +1,63 @@
 # 🛰️ Supply Chain Sentinel
 
-> **Predict. Detect. Reroute.**
-> A real-time AI-powered supply chain disruption detection and rerouting platform.
+> **Predict. Detect. Reroute.** A real-time AI-powered supply chain disruption detection and rerouting platform.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-black?style=for-the-badge&logo=vercel)](https://supply-chain-sentinel-rho.vercel.app)
 [![Backend](https://img.shields.io/badge/Backend-Render-purple?style=for-the-badge&logo=render)](https://supply-chain-sentinel.onrender.com/docs)
 [![GitHub](https://img.shields.io/badge/GitHub-ProKrish-181717?style=for-the-badge&logo=github)](https://github.com/ProKrish/supply-chain-sentinel)
 [![Made with Gemini](https://img.shields.io/badge/AI-Gemini%202.5%20Pro-blue?style=for-the-badge&logo=google)](https://ai.google.dev/)
 
+> 🏆 **Google Solution Challenge 2026** · Built with Google Gemini 2.5 Pro · Deployed on Vercel + Render · Made by **Krish Gupta**
+
+---
+
+## ⚡ For Judges — 3-Minute Walkthrough
+
+> [!WARNING]
+> **First load takes 30–50 seconds.** Render free tier spins down after inactivity.
+> If the screen is blank — wait 40 seconds and refresh once. The backend is waking up.
+
+1. **Open the live app** → [supply-chain-sentinel-rho.vercel.app](https://supply-chain-sentinel-rho.vercel.app)
+2. **Login as Logistics Manager** — `manager@sentinel.com` / `Manager123!`
+3. **Click any red or critical shipment** on the map → see the 5-factor SHAP-style risk breakdown
+4. **Click "Analyse with AI"** → watch Gemini 2.5 Pro stream a live rerouting decision in real time
+5. **Click "Inject Disruption"** → set Singapore, severity 0.8, Typhoon → watch BFS cascade re-score all downstream shipments automatically
+6. **Visit the Analytics tab** → see the 24h risk trend, carrier reliability chart, and trade lane heat table
+
+> **Read-Only Analyst view** — `analyst@sentinel.com` / `Analyst123!` (no AI agent or disruption injection access)
+
+---
+
+## 🔑 Test Credentials
+
+| Role | Email | Password | Access |
+| --- | --- | --- | --- |
+| **Logistics Manager** | manager@sentinel.com | Manager123! | Full — map, AI agent, disruption injection, analytics |
+| **Read-Only Analyst** | analyst@sentinel.com | Analyst123! | View only — map + analytics |
+
+---
+
+## 🌐 UN SDG Alignment
+
+Built for **Google Solution Challenge 2026** — directly aligned with:
+
+| Goal | How Supply Chain Sentinel contributes |
+|------|---------------------------------------|
+| **SDG 8** — Decent Work & Economic Growth | Prevents billions in annual supply chain losses; protects livelihoods and jobs in developing economies that depend on reliable global logistics networks |
+| **SDG 9** — Industry, Innovation & Infrastructure | Builds resilient trade infrastructure with real-time AI-powered risk detection and automated rerouting across 20 global trade nodes and 15 carriers |
+| **SDG 17** — Partnerships for the Goals | Enables transparent, cross-border trade coordination, reducing disruption friction in global supply chains that emerging economies critically depend on for export-led growth |
+
+> Global supply chains connect over 800 million workers across developing nations. A single undetected disruption cascading through a major port like Singapore or Rotterdam can delay hundreds of shipments simultaneously — Supply Chain Sentinel detects and reroutes these cascades in real time before they become economic crises.
+
 ---
 
 ## 🌍 Live Links
 
-| | URL |
-|---|---|
+|  | URL |
+| --- | --- |
 | **Frontend (Live App)** | https://supply-chain-sentinel-rho.vercel.app |
 | **Backend API** | https://supply-chain-sentinel.onrender.com |
 | **API Docs (Swagger)** | https://supply-chain-sentinel.onrender.com/docs |
-
-> ⚠️ **Note:** First load may take 30–50 seconds. Render free tier spins down after inactivity — this is expected. Refresh once if the page hangs.
 
 ---
 
@@ -32,22 +71,27 @@ Global supply chains lose billions annually to undetected disruptions — port c
 - **Detecting** — Propagating disruption cascades via BFS across the entire NetworkX trade graph
 - **Rerouting** — Streaming AI-powered rerouting recommendations via Google Gemini 2.5 Pro in real time
 
+Unlike enterprise tools like SAP TM or Oracle TMS that alert only after delays occur, Supply Chain Sentinel is **predictive and agentic** — it detects cascading risk before shipments are impacted, then autonomously reasons through rerouting options and streams its decision live.
+
 ---
 
 ## ✨ Features
 
 | Feature | Description |
-|---|---|
-| 🗺️ **Live Shipment Map** | 500 shipments on a dark world map with color-coded risk markers |
-| 📊 **Dynamic Risk Scoring** | 5-factor composite score: congestion, weather, geopolitical, carrier, time pressure |
-| 🔬 **SHAP-Style Risk Breakdown** | Animated bars showing exactly which factor is driving each shipment's risk |
-| 🌊 **BFS Cascade Propagation** | Disruptions spread through the trade graph and re-score all connected shipments |
-| ⚡ **Disruption Injection** | Manually inject events (type, node, severity) and watch cascades in real time |
+| --- | --- |
+| 🗺️ **Live Shipment Map** | 500 shipments on a dark world map with color-coded risk markers (green / amber / red / critical) |
+| 📊 **Dynamic Risk Scoring** | 5-factor composite score per shipment: congestion, weather, geopolitical, carrier reliability, time pressure |
+| 🔬 **SHAP-Style Risk Breakdown** | Animated bars showing exactly which factor drives each shipment's risk, with primary driver callout |
+| 🌊 **BFS Cascade Propagation** | Disruptions spread through the NetworkX trade graph and re-score all connected shipments automatically |
+| ⚡ **Disruption Injection** | Manually inject events (type, node, severity 0.1–1.0) and watch cascades propagate in real time |
+| 🔁 **Auto Disruption Simulator** | Random disruptions fire automatically to simulate live network stress |
 | 🤖 **Gemini 2.5 Pro AI Agent** | Multi-tool rerouting agent with SSE streaming showing live reasoning steps |
-| 🔄 **Gemini 2.5 Flash Fallback** | Automatic model switch if primary is rate-limited |
-| 📈 **Analytics Dashboard** | Risk trend (24h), shipment status, carrier reliability, trade lane risk table |
-| 🔐 **Role-Based Access** | Auth0 JWT — Logistics Manager (full) and Read-Only Analyst |
-| ♿ **WCAG 2.1 AA** | Aria labels, keyboard navigation, ESC modal close |
+| 🔄 **Gemini 2.5 Flash Fallback** | Automatic model switch if primary is rate-limited or unavailable |
+| 🧭 **Alternative Route Scoring** | Agent evaluates multiple route options and selects the lowest-risk path |
+| 📋 **Live Disruption Feed** | Scrolling event log with severity indicators, auto-refreshing every 15 seconds |
+| 📈 **Analytics Dashboard** | Risk trend (24h LineChart), shipment status (PieChart), carrier reliability (BarChart), trade lane risk (Table) |
+| 🔐 **Role-Based Access Control** | Auth0 JWT RS256 — Logistics Manager (full access) and Read-Only Analyst (view only) |
+| ♿ **WCAG 2.1 AA Accessibility** | Aria labels, keyboard navigation, ESC modal close, visible focus rings |
 
 ---
 
@@ -91,6 +135,7 @@ Global supply chains lose billions annually to undetected disruptions — port c
 ## 🛠️ Tech Stack
 
 ### Backend
+
 - **FastAPI** — REST API + SSE streaming (13 endpoints)
 - **Supabase PostgreSQL** — Database (psycopg2 pooler port 6543)
 - **NetworkX** — Trade network graph + BFS cascade propagator
@@ -101,6 +146,7 @@ Global supply chains lose billions annually to undetected disruptions — port c
 - **Pydantic v2** — Data validation
 
 ### Frontend
+
 - **React 18 + Vite** — UI framework
 - **Tailwind CSS v4** — Dark theme design system
 - **react-leaflet** — Live shipment world map (CartoDB dark tiles)
@@ -108,6 +154,7 @@ Global supply chains lose billions annually to undetected disruptions — port c
 - **Auth0 React SDK** — Authentication flow
 
 ### Infrastructure
+
 - **Render** — Backend cloud hosting
 - **Vercel** — Frontend cloud hosting + CDN
 - **GitHub** — Version control + CI/CD
@@ -158,6 +205,7 @@ supply-chain-sentinel/
 ## 🚀 Local Development Setup
 
 ### Prerequisites
+
 - Python 3.11+
 - Node.js 18+
 - Supabase account and project
@@ -205,7 +253,7 @@ Run the backend:
 python main.py
 ```
 
-Backend runs at: `http://localhost:8002`  
+Backend runs at: `http://localhost:8002`
 Swagger docs at: `http://localhost:8002/docs`
 
 ### 3. Seed the Database
@@ -268,25 +316,17 @@ Frontend runs at: `http://localhost:5173`
 ### Auth0 Configuration
 
 In Auth0 dashboard → Applications → Settings, add your Vercel URL to:
+
 - **Allowed Callback URLs:** `https://your-app.vercel.app/callback`
 - **Allowed Logout URLs:** `https://your-app.vercel.app`
 - **Allowed Web Origins:** `https://your-app.vercel.app`
 
 ---
 
-## 🔑 Test Credentials
-
-| Role | Email | Password | Access |
-|---|---|---|---|
-| **Logistics Manager** | manager@sentinel.com | Manager123! | Full — map, AI agent, disruption injection, analytics |
-| **Read-Only Analyst** | analyst@sentinel.com | Analyst123! | View only — map + analytics |
-
----
-
 ## 📡 API Endpoints
 
 | Method | Endpoint | Auth | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | GET | `/` | None | Health check |
 | GET | `/health` | None | Database connection check |
 | GET | `/shipments` | ✅ | List shipments (filter by status, risk) |
@@ -323,7 +363,7 @@ The entire reasoning chain streams live to the dashboard via **Server-Sent Event
 Each shipment receives a composite risk score from 5 factors:
 
 | Factor | Type | Source |
-|---|---|---|
+| --- | --- | --- |
 | Port Congestion | Dynamic | Node disruption level |
 | Weather Risk | Dynamic | Disruption type = weather |
 | Geopolitical Risk | Dynamic | Disruption type = geopolitical |
@@ -331,8 +371,9 @@ Each shipment receives a composite risk score from 5 factors:
 | Time Pressure | Dynamic | Deadline vs. estimated arrival |
 
 **Risk Levels:**
+
 - 🟢 `0.0 – 0.29` Low
-- 🟡 `0.3 – 0.59` Medium  
+- 🟡 `0.3 – 0.59` Medium
 - 🔴 `0.6 – 0.79` High
 - 🚨 `0.8 – 1.0` Critical
 
@@ -341,19 +382,22 @@ Each shipment receives a composite risk score from 5 factors:
 ## 🔮 Roadmap
 
 ### Phase 1 — Intelligence (3–6 months)
-- [ ] XGBoost predictive ML risk model on historical data
-- [ ] Live port data (MarineTraffic) + weather (OpenWeatherMap)
-- [ ] Gemini natural language query bar (Cmd+K)
+
+- [ ] XGBoost predictive ML risk model trained on historical disruption data
+- [ ] Live port data (MarineTraffic vessel positions) + weather (OpenWeatherMap storm tracking)
+- [ ] Gemini natural language query bar (Cmd+K) — ask "Which Mumbai shipments are at risk this week?"
 
 ### Phase 2 — Platform (6–12 months)
-- [ ] WhatsApp + email push alerts on risk threshold breach
-- [ ] Multi-tenant SaaS with Auth0 organization isolation
-- [ ] Carrier intelligence history + reliability trend tracking
+
+- [ ] WhatsApp + email push alerts when shipment risk crosses 0.7 threshold
+- [ ] Multi-tenant SaaS with Auth0 organization isolation — each logistics firm gets own workspace
+- [ ] Carrier intelligence history — track on-time rates over time, auto-prefer reliable carriers
 
 ### Phase 3 — Enterprise (12–24 months)
-- [ ] SAP TM + Oracle TMS REST API connectors
-- [ ] Cargo insurance risk API (dynamic premium pricing)
-- [ ] OFAC/EU sanctions compliance tracking
+
+- [ ] SAP TM + Oracle TMS REST API connectors — Sentinel becomes the risk brain behind existing tools
+- [ ] Cargo insurance risk API — license live risk scores to marine cargo insurers for dynamic premium pricing
+- [ ] OFAC/EU sanctions compliance tracking — auto-flag shipments transiting sanctioned ports before departure
 
 ---
 
@@ -362,10 +406,17 @@ Each shipment receives a composite risk score from 5 factors:
 > *"Free users see risk. Paying users act on it."*
 
 | Tier | Price | Key Features |
-|---|---|---|
-| **Free** | $0/month | Map view, risk scores, analytics (50 shipments) |
-| **Pro** | $49/month | AI agent (50 queries), disruption injection, 500 shipments |
-| **Enterprise** | Custom | Unlimited everything, ERP integration, multi-tenant, SLA |
+| --- | --- | --- |
+| **Free** | ₹0/month | Map view, risk scores, analytics (50 shipments) |
+| **Pro** | ₹4,067/month | AI agent (50 queries), disruption injection, BFS simulation, 500 shipments |
+| **Enterprise** | Custom | Unlimited everything, ERP integration, multi-tenant isolation, SLA + priority support |
+
+**Revenue streams:**
+- Monthly SaaS subscriptions (primary)
+- Per-query AI pricing above plan limits — ₹8.30/query
+- Risk data licensing to cargo insurance underwriters (Phase 3)
+
+**Scale-up cost (production):** Supabase Pro ₹2,075 + Render Starter ₹581 + Gemini at scale ~₹249 = ~₹2,905/month supporting thousands of users
 
 ---
 
@@ -383,10 +434,6 @@ MIT License — feel free to fork, build, and ship.
 
 ---
 
-<div align="center">
-
 **Supply Chain Sentinel** — Predict. Detect. Reroute.
 
-*Powered by Google Gemini 2.5 Pro*
-
-</div>
+*Powered by Google Gemini 2.5 Pro · Built for Google Solution Challenge 2026*
