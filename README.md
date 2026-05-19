@@ -278,8 +278,8 @@ In Auth0 dashboard → Applications → Settings, add your Vercel URL to:
 
 | Role | Email | Password | Access |
 |---|---|---|---|
-| **Logistics Manager** | manager@sentinel.com | Manager@123 | Full — map, AI agent, disruption injection, analytics |
-| **Read-Only Analyst** | analyst@sentinel.com | Analyst@123 | View only — map + analytics |
+| **Logistics Manager** | manager@sentinel.com | Manager123! | Full — map, AI agent, disruption injection, analytics |
+| **Read-Only Analyst** | analyst@sentinel.com | Analyst123! | View only — map + analytics |
 
 ---
 
